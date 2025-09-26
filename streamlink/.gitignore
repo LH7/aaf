@@ -1,0 +1,13 @@
+# streamlink files
+/*
+!.gitignore
+
+# except aaf (this syntax omg)
+!/pkgs/
+/pkgs/*
+!/pkgs/streamlink_cli/
+/pkgs/streamlink_cli/*
+!/pkgs/streamlink_cli/aligned_alloc/
+!/pkgs/streamlink_cli/aligned_alloc/**
+__pycache__
+

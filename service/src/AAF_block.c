@@ -1,0 +1,444 @@
+#include "AAF_block.h"
+#include "func_dyn.h"
+#include "shared_malloc.h"
+#include "is_admin.h"
+#include "zeros_array.h"
+#include "qp_timer.h"
+
+#define MOVE_FILE_MAX_RETRIES 3
+
+// Два 8 байтовых числа без заглушки буфера
+// LARGE_INTEGER StartingLcn;
+// LARGE_INTEGER BitmapSize;
+#define VOLUME_BITMAP_HEADER_SIZE 16
+
+// 8*8 кластеров это минимальный блок без ошибки
+#define FAST_CHECK_BITMAP_BYTES 8
+
+static HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
+{
+    wchar_t filePath[MAX_PATH];
+
+    DWORD res = dyn_GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
+    if (res == 0) {
+        return INVALID_HANDLE_VALUE;
+    }
+    if (wcsncmp(filePath, L"\\\\?\\Volume{", 11) != 0) {
+        return INVALID_HANDLE_VALUE;
+    }
+    filePath[48] = 0; // обрезка пути к файлу
+    
+    return CreateFileW(
+        filePath,
+        GENERIC_READ,  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, // NOLINT(hicpp-signed-bitwise)
+        NULL, OPEN_EXISTING, 0, NULL
+    );
+}
+
+// Пока не знаю хочу ли оптимизировать с функцией выше
+static DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
+{
+    wchar_t filePath[MAX_PATH];
+
+    DWORD res = dyn_GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
+    if (res == 0) {
+        return 0;
+    }
+    if (wcsncmp(filePath, L"\\\\?\\Volume{", 11) != 0) {
+        return 0;
+    }
+    filePath[49] = 0; // обрезка пути к файлу
+
+    DWORD lpSectorsPerCluster;
+    DWORD lpBytesPerSector;
+    DWORD lpNumberOfFreeClusters;
+    DWORD lpTotalNumberOfClusters;
+
+    if (!GetDiskFreeSpaceW(
+        filePath,
+        &lpSectorsPerCluster,    &lpBytesPerSector,
+        &lpNumberOfFreeClusters, &lpTotalNumberOfClusters
+    )) {
+        return 0;
+    }
+    return lpSectorsPerCluster * lpBytesPerSector;
+}
+
+static int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, LONGLONG *pCheckedStartingLcn_c8, LONGLONG *pCheckedBlockLength_c8, LONGLONG *pBitmapSize_c8, int *pIsFreeBlock)
+{
+    int ret = 0;
+    
+    size_t bufferSize;
+    DWORD bytesReturned;
+    
+    LARGE_INTEGER         StartingLcn;
+    VOLUME_BITMAP_BUFFER *pvb_buffer;
+    
+    StartingLcn.QuadPart = StartingLcn_c8 * 8;
+    bufferSize = VOLUME_BITMAP_HEADER_SIZE + BlockLength_c8;
+
+    // в данном случае буфер нужен только тут  поэтому используем грязный буфер без реаллокации
+    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_VirtualAlloc(bufferSize);
+
+    if (pvb_buffer == NULL) {
+        ret = -1;
+        goto err_aaf_check_free_block_in_bitmap;
+    }
+    
+    BOOL res = DeviceIoControl(
+        hVolume, FSCTL_GET_VOLUME_BITMAP, // NOLINT(hicpp-signed-bitwise)
+        &StartingLcn, sizeof(StartingLcn),
+        pvb_buffer, bufferSize,
+        &bytesReturned, NULL
+    );
+    if (!res && (GetLastError() != ERROR_MORE_DATA)){
+        ret = -2;
+        goto err_aaf_check_free_block_in_bitmap;
+    }
+
+    *pCheckedStartingLcn_c8 = pvb_buffer->StartingLcn.QuadPart / 8LL;
+    *pCheckedBlockLength_c8 = bytesReturned - VOLUME_BITMAP_HEADER_SIZE;
+    *pBitmapSize_c8 = ((pvb_buffer->BitmapSize.QuadPart + 7ULL) & ~7ULL) / 8LL;
+    *pIsFreeBlock = is_all_zeros_array(pvb_buffer->Buffer, *pCheckedBlockLength_c8);
+
+err_aaf_check_free_block_in_bitmap:
+    //if (pvb_buffer != NULL) free(pvb_buffer);
+    return ret;
+}
+
+static int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
+{
+    int ret = 0;
+
+    DWORD bytesReturned = 0;
+    STARTING_VCN_INPUT_BUFFER inputBuffer = {};
+
+    DWORD bufferSize = 512;
+    
+    while (1) {
+        // используем грязный буфер, нам нужен результат только одной функции
+        *ppBuffer = shared_VirtualAlloc(bufferSize);
+        if (!*ppBuffer) {
+            ret = -1;
+            goto err_aaf_get_file_extents;
+        }
+
+        inputBuffer.StartingVcn.QuadPart = 0;
+        BOOL result = DeviceIoControl(
+            hFile,
+            FSCTL_GET_RETRIEVAL_POINTERS, // NOLINT(hicpp-signed-bitwise)
+            &inputBuffer, sizeof(inputBuffer),
+            *ppBuffer, bufferSize,
+            &bytesReturned, NULL
+        );
+        if (result || GetLastError() == ERROR_HANDLE_EOF) {
+            ret = 0;
+            goto err_aaf_get_file_extents;
+        } else {
+            if (GetLastError() == ERROR_MORE_DATA) {
+                bufferSize *= 2;
+                if (bufferSize <= 1024 * 1024) break;
+                continue;
+            } else {
+                ret = -2;
+                goto err_aaf_get_file_extents;
+            }
+        }
+    }
+    
+    ret = -3; // слишком много фрагментов
+
+err_aaf_get_file_extents:
+    return ret;
+}
+
+static int AAF_move_extent(HANDLE hVolume, MOVE_FILE_DATA *pMoveFileData)
+{
+    int ret = 0;
+
+    DWORD bytesReturned;
+    BOOL result;
+
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        ret = -1;
+        goto err_aaf_move_file_clusters;
+    }
+
+    result = DeviceIoControl(
+        hVolume,
+        FSCTL_MOVE_FILE,  // NOLINT(hicpp-signed-bitwise)
+        pMoveFileData, sizeof(MOVE_FILE_DATA),
+        NULL, 0, &bytesReturned, NULL
+    );
+    if (!result) {
+        ret = -2;
+        goto err_aaf_move_file_clusters;
+    }
+
+err_aaf_move_file_clusters:
+    return ret;
+}
+
+static LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents_num)
+{
+    LARGE_INTEGER currentVcn = pRPB->StartingVcn;
+    LONGLONG ret = 0;
+
+    for (DWORD i = 0; i < extents_num; i++) {
+        LARGE_INTEGER nextVcn = pRPB->Extents[i].NextVcn;
+        ret += nextVcn.QuadPart - currentVcn.QuadPart;
+        currentVcn = nextVcn;
+    }
+    
+    return ret;
+}
+
+static LARGE_INTEGER get_file_last_extent_vcn(RETRIEVAL_POINTERS_BUFFER *pRPB)
+{
+    if (pRPB->ExtentCount < 2) {
+        return pRPB->StartingVcn;
+    }
+    return pRPB->Extents[pRPB->ExtentCount - 2].NextVcn;
+}
+
+static int get_file_size_and_extents(HANDLE hFile, LARGE_INTEGER *file_size, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
+{
+    if (!GetFileSizeEx(hFile, file_size)) return 0;
+    if (AAF_get_file_extents(hFile, ppBuffer) != 0) return 0;
+    return 1;
+}
+
+int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLONG *pStatusCode, AAF_stats_t *pStats)
+{
+    LONGLONG qp_timer_start, qp_timer_end;
+    qp_timer_start = qp_time_get();
+
+    int res;
+    int status_code = 0;
+
+    pStats->allocOffset  = 0;
+    pStats->searchTotal  = 0;
+    pStats->searchSkip   = 0;
+    pStats->moveAttempts = 0;
+
+    HANDLE hVolume = INVALID_HANDLE_VALUE;
+    RETRIEVAL_POINTERS_BUFFER *pRPB_shared;
+
+    LARGE_INTEGER old_file_size; // текущий размер файла
+    LARGE_INTEGER new_file_size; // планированный размер + 1 блок
+    LARGE_INTEGER frg_file_size; // размер [без врагментов] + 1 кластер
+
+    DWORD old_extent_count, new_extent_count;
+
+    // текущий размер и фрагменты
+    if (!get_file_size_and_extents(hFile, &old_file_size, &pRPB_shared)) {
+        status_code = -1;
+        goto err_aaf_alloc_block;
+    }
+    old_extent_count = pRPB_shared->ExtentCount;
+    //printf("old size: %I64d\n", old_file_size.QuadPart);
+    //printf("old extent count: %d\n", (int)old_extent_count);
+
+    new_file_size.QuadPart = old_file_size.QuadPart + blockSize;
+
+    // расширение файла
+    if (!AAF_set_file_size(hFile, new_file_size)){
+        status_code = -2;
+        goto err_aaf_alloc_block;
+    }
+
+    // новый размер и блоки (размер перевычисляется для актуальности)
+    if (!get_file_size_and_extents(hFile, &new_file_size, &pRPB_shared)) {
+        status_code = -3;
+        goto err_aaf_alloc_block;
+    }
+    new_extent_count = pRPB_shared->ExtentCount;
+    //printf("resize to: %I64d\n", new_file_size.QuadPart);
+    //printf("new extent count: %d\n", (int)new_extent_count);
+
+    // нет дополнительной фрагментации
+    if (old_extent_count == new_extent_count) {
+        //printf("No new fragments\n");
+        goto err_aaf_alloc_block;
+    }
+
+    // без административных прав мы не можем дальше продолжать
+    // файл был просто аллоцирован с фрагментацией но не выровнен
+    if (!isAdmin()) {
+        status_code = 1;
+        goto err_aaf_alloc_block;
+    }
+
+    // для кластерного перемещения нужен хендл диска
+    hVolume = AAF_get_volume_handle_by_file_handle(hFile);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        status_code = -4;
+        goto err_aaf_alloc_block;
+    }
+
+    LONGLONG cluster_size = AAF_get_cluster_size_by_file_handle(hFile);
+    if (cluster_size == 0) {
+        status_code = -5;
+        goto err_aaf_alloc_block;
+    }
+
+    // подсчет длины файла без последнего фрагмента в кластерах
+    LONGLONG frag_size = calc_extents_size(pRPB_shared, old_extent_count);
+    // а это размер в байтах + 1 кластер
+    frg_file_size.QuadPart = (frag_size + 1) * cluster_size;
+    //printf("resize to: %I64d\n", frg_file_size.QuadPart);
+
+    // уменьшаем файл чтобы образовался 1 кластер от последнего фрагмента
+    if (!AAF_set_file_size(hFile, frg_file_size)){
+        status_code = -6;
+        goto err_aaf_alloc_block;
+    }
+
+    int IsFreeBlock;
+
+    LONGLONG StartingLcn_c8 = 0;
+    // битмап содержит в каждом байте по 8 кластеров
+    LONGLONG BlockLength_c8 = alignSize / cluster_size / 8LL;
+    LONGLONG CheckedStartingLcn_c8;
+    LONGLONG CheckedBlockLength_c8;
+    LONGLONG BitmapSize_c8;
+
+    MOVE_FILE_DATA pMoveFileData;
+    pMoveFileData.FileHandle   = hFile;
+    pMoveFileData.StartingVcn  = get_file_last_extent_vcn(pRPB_shared);
+    pMoveFileData.ClusterCount = 1; // тут всегда 1 кластер, ради этого и уменьшали
+
+    int free_block_found = 0;
+    while (1)
+    {
+        pStats->searchTotal++;
+
+        // суть в том чтобы не читать весь битмап при прыжках по заполненному диску
+        // Больще оптимизация для самого алллокатора
+        //printf("Search free block (cluster) at: %I64d\n", StartingLcn_c8);
+        if (AAF_check_free_block_in_bitmap(
+            hVolume, StartingLcn_c8, FAST_CHECK_BITMAP_BYTES,
+            &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
+            &BitmapSize_c8, &IsFreeBlock
+        )) {
+            status_code = -7;
+            goto err_aaf_alloc_block;
+        }
+        //printf("Checked clusters: %I64d\n", CheckedBlockLength_c8);
+        if (!IsFreeBlock) {
+            pStats->searchSkip++;
+            //printf("BitmapSize_c8: %I64d, block: %I64d\n", BitmapSize_c8, BlockLength_c8);
+            //printf("Non free, skip: %I64d\n", BlockLength_c8);
+            // в данном случае скипается весь блок хоть запрашивали и 8 кластеров
+            StartingLcn_c8 = CheckedStartingLcn_c8 + BlockLength_c8;
+            if (BitmapSize_c8 <= BlockLength_c8) break;
+            continue;
+        }
+
+        //printf("Search full free block at: %I64d\n", StartingLcn_c8 * 8 * 4096);
+        
+        // Если начало пустое то проверяем уже весь блок
+        if (AAF_check_free_block_in_bitmap(
+            hVolume, StartingLcn_c8, BlockLength_c8,
+            &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
+            &BitmapSize_c8, &IsFreeBlock
+        )) {
+            status_code = -7;
+            goto err_aaf_alloc_block;
+        }
+
+        //IsFreeBlock = 0;
+
+        if (IsFreeBlock) {
+            // пробуем переместить кластер
+            pStats->moveAttempts++;
+            pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
+            //printf("move last cluster to: %I64d\n", pMoveFileData.StartingLcn.QuadPart * 4096);
+
+            res = AAF_move_extent(hVolume, &pMoveFileData);
+
+            //res = 0;
+            if (res == 0) {
+                pStats->allocOffset = pMoveFileData.StartingLcn.QuadPart * cluster_size;
+                free_block_found = 1;
+                break;
+            }
+            if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES) {
+                // По сути блок мы нашли, просто что-то не переместилсо...
+                // вообще этого быть не должно, просто в логах будет 3 попытки и 0 в позиции
+                // так же используем обычное расширение, поэтому найдено не пишем
+                break;
+            }
+            //printf("Can't move, retry\n");
+        }
+
+        StartingLcn_c8 = CheckedStartingLcn_c8 + CheckedBlockLength_c8;
+        if (BitmapSize_c8 == CheckedBlockLength_c8) break;
+    }
+
+//    printf("BitmapSize_c8: %I64d, CheckedBlockLength_c8: %I64d\n", BitmapSize_c8, CheckedBlockLength_c8);
+//    printf("BitmapSize_c8: %I64d, BlockLength_c8: %I64d\n", BitmapSize_c8, BlockLength_c8);
+//    printf("free_block_found: %d\n", free_block_found);
+
+    if (!free_block_found) {
+        // если блок не найден то просто оставляем как есть
+        // увеличиваем средствами ntfs до планированного
+
+        //printf("can't find free block, use default allocator\n");
+
+        // сжимаем вначале файл до оригинального размера
+        // иначе ntfs без выравнивания оставит этот висящий кластер и выделит полный блок
+        // ниже будет полная аллокация
+        if (!AAF_set_file_size(hFile, old_file_size)) {
+            status_code = -8;
+            goto err_aaf_alloc_block;
+        }
+        status_code = 2;
+    }
+
+    // Теперь увеличиваем размер до планируемого
+    if (!AAF_set_file_size(hFile, new_file_size)) {
+        status_code = -9;
+        goto err_aaf_alloc_block;
+    }
+    //printf("resize file to: %I64d\n", new_file_size.QuadPart);
+
+    // в случае если не смогли переместить и юзали стандартное выделение
+    // интересно будет ли вообще такое
+    if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES) {
+        status_code = 3;
+        goto err_aaf_alloc_block;
+    }
+
+err_aaf_alloc_block:
+
+    if (get_file_size_and_extents(hFile, &old_file_size, &pRPB_shared)) {
+        pStats->fileLength = new_file_size.QuadPart;
+        pStats->fileFragments = pRPB_shared->ExtentCount;
+    } else {
+        status_code = -10;
+    }
+
+    if (hVolume != INVALID_HANDLE_VALUE) CloseHandle(hVolume);
+    if (pStatusCode != NULL) *pStatusCode = status_code;
+
+    qp_timer_end = qp_time_get();
+    pStats->allocTime = qp_timer_diff_100ns(qp_timer_start, qp_timer_end);
+
+    shared_VirtualAlloc(0); // аналог free
+    return status_code >= 0;
+}
+
+int AAF_set_file_size(HANDLE hFile, LARGE_INTEGER new_size) {
+    if (!SetFilePointerEx(hFile, new_size, NULL, FILE_BEGIN)) {
+        //printf("->set pointer error %d\n", GetLastError());
+        return 0;
+    }
+    if (!SetEndOfFile(hFile)) {
+        //printf("->set size error %d\n", GetLastError());
+        return 0;
+    }
+    return 1;
+}
+
+

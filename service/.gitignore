@@ -1,0 +1,12 @@
+# clion 
+.idea
+
+# cache
+/cmake-build-*
+/bin/*
+
+# generated files
+/res/resources.rc
+
+# empty folders
+!/bin/.gitkeep
