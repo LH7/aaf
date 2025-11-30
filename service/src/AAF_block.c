@@ -113,7 +113,7 @@ static int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuff
     DWORD bytesReturned = 0;
     STARTING_VCN_INPUT_BUFFER inputBuffer = {};
 
-    DWORD bufferSize = 512;
+    DWORD bufferSize = 2048; // 126 фрагментов
     
     while (1) {
         // используем грязный буфер, нам нужен результат только одной функции
@@ -137,7 +137,7 @@ static int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuff
         } else {
             if (GetLastError() == ERROR_MORE_DATA) {
                 bufferSize *= 2;
-                if (bufferSize <= 1024 * 1024) break;
+                if (bufferSize >= 1024 * 1024) break; // это больше 65K фрагментов, нереально в нормальных условиях
                 continue;
             } else {
                 ret = -2;
@@ -216,10 +216,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     int res;
     int status_code = 0;
 
-    pStats->allocOffset  = 0;
-    pStats->searchTotal  = 0;
-    pStats->searchSkip   = 0;
-    pStats->moveAttempts = 0;
+    ZeroMemory(pStats, sizeof(AAF_stats_t));
 
     HANDLE hVolume = INVALID_HANDLE_VALUE;
     RETRIEVAL_POINTERS_BUFFER *pRPB_shared;
