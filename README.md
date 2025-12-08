@@ -1,29 +1,40 @@
 # Aligned allocation file for [streamlink](https://github.com/streamlink/streamlink)
-Windows only. A service to reduce file fragmentation when recording multiple channels. [My way to this code (in russian)](https://llh.su/doc/notes/fragmentation)  
+Windows only. A service to reduce file fragmentation when recording multiple channels
+> [!NOTE]
+> [My way to this code](https://llh.su/doc/notes/fragmentation)  
 
-### Client
-- Copy `streamlink/pkgs/streamlink_cli/aligned_alloc` to `streamlink_cli` folder
-- Add `import streamlink_cli.aligned_alloc.patch_functions` to the top of `streamlink/pkgs/streamlink_cli/main.py`
+## Install
+**Client**
+1. Copy **`streamlink/pkgs/streamlink_cli/aligned_alloc`** to **`streamlink_cli`** folder
+2. Add **`import streamlink_cli.aligned_alloc.patch_functions`** to the top of **`streamlink/pkgs/streamlink_cli/main.py`**
 
-### Service
-- Download from releases or Cmake + MinGW64
-- Call `AAF_service.exe start` to install service and start
-- Call `AAF_service.exe uninstall` to stop and remove service
+**Service**
+1. Download from [releases](../../releases) or CMake + MinGW64
+2. Call **`AAF_service serviceStart`** to install service and start
+> [!NOTE]
+> Call **`AAF_service help`** to show command line help  
+> Can be run without install, but requires admin rights
+
+> [!IMPORTANT]
+> Ensure your streamlink version (32/64-bit) matches the service architecture
 
 ## New strealink command line keys
-- `--aaf-prealloc-size` - preallocation size in megabytes
-- `--aaf-align-size` - align size in gigabytes
-- `--aaf-back-48h-on-complete` - set time for completed files to 2 days back, for TC colors
+- **`--aaf-prealloc-size`** - preallocation size in megabytes
+- **`--aaf-align-size`** - align size in gigabytes
+- **`--aaf-back-48h-on-complete`** - set time for completed streams to 2 days back, for TC colors
+> [!IMPORTANT]
+> Key **`--aaf-prealloc-size`** is required for other keys
+ 
+## Simple 100MB prealloc example
+**`> streamlink --aaf-prealloc-size 100 ...`**  
+> [!NOTE]
+> Required client only
 
-Second two keys works with `--aaf-prealloc-size`
-## Examples
-#### `--aaf-prealloc-size 100`
-- Streamlink simply increases the file size in 100MB increments instead of 8KB, resulting in 100MB fragments.
-- Required client only.
+## Physical 5GB align example with 100MB prealloc
+**`> streamlink --aaf-align-size 5 --aaf-prealloc-size 100 ...`**
+> [!NOTE]
+> A dedicated disk or partition is recommended for this option.  
+> Required client and service.
 
-#### `--aaf-prealloc-size 100 --aaf-align-size 10`
-- File allocation uses 10GB physical alignment, resulting in 10GB fragments.
-- A dedicated disk or partition is recommended for this option.
-- Required client and service.
 ## License
 Same with streamlink
