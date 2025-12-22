@@ -1,0 +1,42 @@
+name: Autobuild Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+    contents: write
+      
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Cross-compile Windows
+        uses: ./.github/actions/cross-compile-win
+        with:
+          target: AAF_service
+          project-dir: service
+          build-dir: build
+
+      - name: Create zip of service
+        run: |
+          zip -j service_${{ github.ref_name }}.zip service/bin/*.exe
+      
+      - name: Create zip of client
+        run: |
+          zip -r client_${{ github.ref_name }}.zip streamlink -i *.py
+          
+      - name: Upload Release Assets (Service)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: service_${{ github.ref_name }}.zip
+     
+      - name: Upload Release Assets (Client)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: client_${{ github.ref_name }}.zip

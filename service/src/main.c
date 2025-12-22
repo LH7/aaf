@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <windows.h>
 #include <stdio.h>
 
@@ -15,9 +16,9 @@ static void finishRequest()
 {
     LogAAFBufferStat(LogFileName, AAF.pBuffer);
 
-    printf("Success: %I64d, code %I64d, FileLength: %I64d, Fragments: %I64d\n", AAF.pBuffer->result.success,
+    printf("Success: %"PRId64", code %"PRId64", FileLength: %"PRId64", Fragments: %"PRId64"\n", (intmax_t)AAF.pBuffer->result.success,
            AAF.pBuffer->result.statusCode, AAF.pBuffer->stats.fileLength, AAF.pBuffer->stats.fileFragments);
-    printf("Offset: %I64d, Time: %I64d, SearchSkip: %I64d, SearchTotal: %I64d, MoveAttempts: %I64d\n",
+    printf("Offset: %"PRId64", Time: %"PRId64", SearchSkip: %"PRId64", SearchTotal: %"PRId64", MoveAttempts: %"PRId64"\n",
            AAF.pBuffer->stats.allocOffset, AAF.pBuffer->stats.allocTime, AAF.pBuffer->stats.searchSkip,
            AAF.pBuffer->stats.searchTotal, AAF.pBuffer->stats.moveAttempts);
 
@@ -52,7 +53,7 @@ static int WMain(int argc, wchar_t **argv)
         printf("Warning: no admin rights, simple alloc only\n");
     }
 
-    wprintf(L"Started, shared objects prefix: '%s'\n", SHARED_OBJECTS_PREFIX);
+    wprintf(L"Started, shared objects prefix: '%ls'\n", SHARED_OBJECTS_PREFIX);
 
     while (1)
     {
@@ -65,7 +66,7 @@ static int WMain(int argc, wchar_t **argv)
         if (SimpleServiceIsStopEventRequested()) break;
 
         printf(
-            "New request. PID: %I64d, hFile: %I64d, blockSize: %I64d, alignSize: %I64d\n",
+            "New request. PID: %"PRId64", hFile: %"PRId64", blockSize: %"PRId64", alignSize: %"PRId64"\n",
             AAF.pBuffer->request.PID, AAF.pBuffer->request.hFile,
             AAF.pBuffer->request.blockSize, AAF.pBuffer->request.alignSize
         );

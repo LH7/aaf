@@ -10,9 +10,9 @@ static int makeServiceCmdLine(wchar_t *logPath, wchar_t *pSvcProcessCommandLine)
         return 1;
     }
     if (logPath != NULL) {
-        swprintf(pSvcProcessCommandLine, MAX_PATH, L"\"%s\" %s \"%s\"", currentProcessPath, L"log", logPath);
+        swprintf(pSvcProcessCommandLine, MAX_PATH, L"\"%ls\" %ls \"%ls\"", currentProcessPath, L"log", logPath);
     } else {
-        swprintf(pSvcProcessCommandLine, MAX_PATH, L"\"%s\"", currentProcessPath);
+        swprintf(pSvcProcessCommandLine, MAX_PATH, L"\"%ls\"", currentProcessPath);
     }
     return 0;
 }

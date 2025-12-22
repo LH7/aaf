@@ -1,6 +1,7 @@
 #ifndef _ALIGNED_ALLOC_FILE_H
 #define _ALIGNED_ALLOC_FILE_H
 
+#include <inttypes.h>
 #include <windows.h>
 #include "AAF_buffer.h"
 

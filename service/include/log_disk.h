@@ -1,6 +1,7 @@
 #ifndef _LOG_DISK_H
 #define _LOG_DISK_H
 
+#include <inttypes.h>
 #include "AAF_buffer.h"
 
 void LogSimple(const wchar_t *filename, const char *text);

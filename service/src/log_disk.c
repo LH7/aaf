@@ -49,7 +49,7 @@ void LogSimple(const wchar_t *filename, const char *text)
     
     FILE *file = _wfopen(filename, L"a");
     if (file == NULL) {
-        wprintf(L"Error open log file \"%s\"\n", filename);
+        wprintf(L"Error open log file \"%ls\"\n", filename);
         return;
     }
     char date_str[32];
@@ -64,13 +64,13 @@ void LogAAFBufferStat(const wchar_t *filename, const AAF_buffer_t *AAFb)
     
     FILE *file = _wfopen(filename, L"a");
     if (file == NULL) {
-        wprintf(L"Error open log file \"%s\"\n", filename);
+        wprintf(L"Error open log file \"%ls\"\n", filename);
         return;
     }
     char date_str[32];
     get_date(date_str);
     fprintf(file,
-        "%s,rqs,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d,%I64d\n",
+        "%s,rqs,%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64"\n",
         date_str,
         AAFb->request.PID, AAFb->request.hFile, AAFb->request.blockSize, AAFb->request.alignSize,
         AAFb->result.success, AAFb->result.statusCode,
@@ -86,7 +86,7 @@ void LogAAFBufferHeaders(const wchar_t *filename)
 
     FILE *file = _wfopen(filename, L"a");
     if (file == NULL) {
-        wprintf(L"Error open log file \"%s\"\n", filename);
+        wprintf(L"Error open log file \"%ls\"\n", filename);
         return;
     }
     char date_str[32];

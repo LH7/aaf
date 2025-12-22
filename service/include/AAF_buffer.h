@@ -6,7 +6,8 @@
 
 #define STRING_LOW_SECURITY_DESCRIPTOR_RW L"D:(A;;GA;;;AU)"
 
-#define MAKE_SHARE_NAMESPACE(name) L"Global\\AAFv1_"#name
+#define LSTR(x) L##x
+#define MAKE_SHARE_NAMESPACE(name) L"Global\\AAFv1_" LSTR(#name)
 
 #define SHARED_OBJECTS_PREFIX        MAKE_SHARE_NAMESPACE()
 #define SHARED_MEMORY_BUFFER_NAME    MAKE_SHARE_NAMESPACE(Buf)

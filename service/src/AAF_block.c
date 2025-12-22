@@ -233,7 +233,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
     old_extent_count = pRPB_shared->ExtentCount;
-    //printf("old size: %I64d\n", old_file_size.QuadPart);
+    //printf("old size: %"PRId64"\n", old_file_size.QuadPart);
     //printf("old extent count: %d\n", (int)old_extent_count);
 
     new_file_size.QuadPart = old_file_size.QuadPart + blockSize;
@@ -250,7 +250,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
     new_extent_count = pRPB_shared->ExtentCount;
-    //printf("resize to: %I64d\n", new_file_size.QuadPart);
+    //printf("resize to: %"PRId64"\n", new_file_size.QuadPart);
     //printf("new extent count: %d\n", (int)new_extent_count);
 
     // нет дополнительной фрагментации
@@ -283,7 +283,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     LONGLONG frag_size = calc_extents_size(pRPB_shared, old_extent_count);
     // а это размер в байтах + 1 кластер
     frg_file_size.QuadPart = (frag_size + 1) * cluster_size;
-    //printf("resize to: %I64d\n", frg_file_size.QuadPart);
+    //printf("resize to: %"PRId64"\n", frg_file_size.QuadPart);
 
     // уменьшаем файл чтобы образовался 1 кластер от последнего фрагмента
     if (!AAF_set_file_size(hFile, frg_file_size)){
@@ -312,7 +312,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
 
         // суть в том чтобы не читать весь битмап при прыжках по заполненному диску
         // Больще оптимизация для самого алллокатора
-        //printf("Search free block (cluster) at: %I64d\n", StartingLcn_c8);
+        //printf("Search free block (cluster) at: %"PRId64"\n", StartingLcn_c8);
         if (AAF_check_free_block_in_bitmap(
             hVolume, StartingLcn_c8, FAST_CHECK_BITMAP_BYTES,
             &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
@@ -321,18 +321,18 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
             status_code = -7;
             goto err_aaf_alloc_block;
         }
-        //printf("Checked clusters: %I64d\n", CheckedBlockLength_c8);
+        //printf("Checked clusters: %"PRId64"\n", CheckedBlockLength_c8);
         if (!IsFreeBlock) {
             pStats->searchSkip++;
-            //printf("BitmapSize_c8: %I64d, block: %I64d\n", BitmapSize_c8, BlockLength_c8);
-            //printf("Non free, skip: %I64d\n", BlockLength_c8);
+            //printf("BitmapSize_c8: %"PRId64", block: %"PRId64"\n", BitmapSize_c8, BlockLength_c8);
+            //printf("Non free, skip: %"PRId64"\n", BlockLength_c8);
             // в данном случае скипается весь блок хоть запрашивали и 8 кластеров
             StartingLcn_c8 = CheckedStartingLcn_c8 + BlockLength_c8;
             if (BitmapSize_c8 <= BlockLength_c8) break;
             continue;
         }
 
-        //printf("Search full free block at: %I64d\n", StartingLcn_c8 * 8 * 4096);
+        //printf("Search full free block at: %"PRId64"\n", StartingLcn_c8 * 8 * 4096);
         
         // Если начало пустое то проверяем уже весь блок
         if (AAF_check_free_block_in_bitmap(
@@ -350,7 +350,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
             // пробуем переместить кластер
             pStats->moveAttempts++;
             pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
-            //printf("move last cluster to: %I64d\n", pMoveFileData.StartingLcn.QuadPart * 4096);
+            //printf("move last cluster to: %"PRId64"\n", pMoveFileData.StartingLcn.QuadPart * 4096);
 
             res = AAF_move_extent(hVolume, &pMoveFileData);
 
@@ -373,8 +373,8 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         if (BitmapSize_c8 == CheckedBlockLength_c8) break;
     }
 
-//    printf("BitmapSize_c8: %I64d, CheckedBlockLength_c8: %I64d\n", BitmapSize_c8, CheckedBlockLength_c8);
-//    printf("BitmapSize_c8: %I64d, BlockLength_c8: %I64d\n", BitmapSize_c8, BlockLength_c8);
+//    printf("BitmapSize_c8: %"PRId64", CheckedBlockLength_c8: %"PRId64"\n", BitmapSize_c8, CheckedBlockLength_c8);
+//    printf("BitmapSize_c8: %"PRId64", BlockLength_c8: %"PRId64"\n", BitmapSize_c8, BlockLength_c8);
 //    printf("free_block_found: %d\n", free_block_found);
 
     if (!free_block_found) {
@@ -398,7 +398,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         status_code = -9;
         goto err_aaf_alloc_block;
     }
-    //printf("resize file to: %I64d\n", new_file_size.QuadPart);
+    //printf("resize file to: %"PRId64"\n", new_file_size.QuadPart);
 
     // в случае если не смогли переместить и юзали стандартное выделение
     // интересно будет ли вообще такое

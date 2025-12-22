@@ -1,0 +1,42 @@
+name: Autobuild on push
+
+on:
+  push:
+    branches: [ "main" ]
+  
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+    
+      - name: Cross-compile Windows
+        uses: ./.github/actions/cross-compile-win
+        with:
+          target: AAF_service
+          project-dir: service
+          build-dir: build
+      
+      - name: Prepare client folder
+        run: |
+          mkdir -p client/streamlink
+          rsync -av \
+          --prune-empty-dirs \
+          --include='*/' \
+          --include='*.py' \
+          --exclude='*' \
+          streamlink/ client/streamlink/
+          
+      - name: Upload artifact (Service)
+        uses: actions/upload-artifact@v4
+        with:
+          name: service
+          path: service/bin/*.exe
+      
+      - name: Upload artifact (Client)
+        uses: actions/upload-artifact@v4
+        with:
+          name: client
+          path: client/
