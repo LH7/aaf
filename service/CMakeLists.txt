@@ -24,40 +24,12 @@ set(SOURCES_common
         src/shared_malloc.c include/shared_malloc.h
         )
 
-set(SOURCES_AAF_service
-        src/main.c
-        src/simple_service.c  include/simple_service.h
-        src/arguments_proc.c  include/arguments_proc.h
-        )
-set(SOURCES_AAF_test
-        src/AAF_test.c
-        )
-set(SOURCES_AAF_block_lib
-        src/AAF_lib.c
-        )
-
-add_executable(AAF_service
-        ${SOURCES_common}
-        ${SOURCES_AAF_service}
-        res/resources.rc
-        )
-add_executable(AAF_test
-        ${SOURCES_common}
-        ${SOURCES_AAF_test}
-        )
-add_library(AAF_block SHARED
-        ${SOURCES_common}
-        ${SOURCES_AAF_block_lib}
-        res/resources.rc
-        )
-
-target_include_directories(AAF_test PRIVATE include)
-target_include_directories(AAF_service PRIVATE include)
-target_include_directories(AAF_block PRIVATE include)
-
-add_custom_target(_buid_all_ ALL DEPENDS
-        AAF_service AAF_test AAF_block
-        )
+set(ALL_TARGETS)
+file(GLOB TARGETS_CMAKE "cmake/build_*.cmake")
+foreach(target_file ${TARGETS_CMAKE})
+        include(${target_file})
+endforeach()
+add_custom_target(_buid_all_ ALL DEPENDS ${ALL_TARGETS})
 
 add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/res/resources.rc

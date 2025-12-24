@@ -131,7 +131,7 @@ int wmain() {
                     &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
                     &BitmapSize_c8, &IsFreeBlock
             );
-            //printf("StartingLcn_c8: %jd, CheckedBlockLength_c8: %jd\n", StartingLcn_c8, CheckedBlockLength_c8);
+            //printf("StartingLcn_c8: %"PRId64", CheckedBlockLength_c8: %"PRId64"\n", StartingLcn_c8, CheckedBlockLength_c8);
             if (ret != 0) {
                 printf("Error check block: %d\n", (int)ret);
                 break;
@@ -147,7 +147,7 @@ int wmain() {
         LONGLONG end_time = qp_time_get();
 
         LONGLONG time_to_proces = qp_timer_diff_100ns(init_time, end_time);
-        printf("Calls: %d, Buffer_size: %jd, Total time: %f\n", (int)total_calls, BlockLength_c8, (double)time_to_proces / 10000);
+        printf("Calls: %d, Buffer_size: %"PRId64", Total time: %f\n", (int)total_calls, BlockLength_c8, (double)time_to_proces / 10000);
     }
 
     printf("\n== normal test ==\n");
@@ -165,7 +165,7 @@ int wmain() {
                     &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
                     &BitmapSize_c8, &IsFreeBlock
             );
-            //printf("StartingLcn_c8: %jd, CheckedBlockLength_c8: %jd\n", StartingLcn_c8, CheckedBlockLength_c8);
+            //printf("StartingLcn_c8: %"PRId64", CheckedBlockLength_c8: %"PRId64"\n", StartingLcn_c8, CheckedBlockLength_c8);
             if (ret != 0) {
                 printf("Error check block: %d\n", (int)ret);
                 break;
@@ -177,7 +177,7 @@ int wmain() {
         LONGLONG end_time = qp_time_get();
 
         LONGLONG time_to_proces = qp_timer_diff_100ns(init_time, end_time);
-        printf("Calls: %d, Buffer_size: %jd, Total time: %f\n", (int)total_calls, BlockLength_c8, (double)time_to_proces / 10000);
+        printf("Calls: %d, Buffer_size: %"PRId64", Total time: %f\n", (int)total_calls, BlockLength_c8, (double)time_to_proces / 10000);
     }
 
     //dummy_buf = shared_VirtualAlloc(0);
@@ -204,8 +204,8 @@ int wmain() {
                 hFile, block_size, align_size, &AAF_Result.statusCode, &AAF_Stat
         );
 
-        printf("Success: %jd, code %jd, FileLength: %jd, Fragments: %jd\n", AAF_Result.success, AAF_Result.statusCode, AAF_Stat.fileLength, AAF_Stat.fileFragments);
-        printf("Offset: %jd, Time: %.4f, SearchSkip: %jd, SearchTotal: %jd, MoveAttempts: %jd\n", AAF_Stat.allocOffset, (double)AAF_Stat.allocTime / 10000, AAF_Stat.searchSkip, AAF_Stat.searchTotal, AAF_Stat.moveAttempts);
+        printf("Success: %"PRId64", code %"PRId64", FileLength: %"PRId64", Fragments: %"PRId64"\n", AAF_Result.success, AAF_Result.statusCode, AAF_Stat.fileLength, AAF_Stat.fileFragments);
+        printf("Offset: %"PRId64", Time: %.4f, SearchSkip: %"PRId64", SearchTotal: %"PRId64", MoveAttempts: %"PRId64"\n", AAF_Stat.allocOffset, (double)AAF_Stat.allocTime / 10000, AAF_Stat.searchSkip, AAF_Stat.searchTotal, AAF_Stat.moveAttempts);
         total_time += AAF_Stat.allocTime;
 
     }
