@@ -10,7 +10,6 @@ add_compile_definitions(__USE_MINGW_ANSI_STDIO=0)
 
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -Wall -flto -fdata-sections -ffunction-sections -municode -Wl,-gc-sections -s -static")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_SOURCE_DIR}/bin)
-set(CMAKE_SHARED_LIBRARY_PREFIX "")
 
 set(SOURCES_common
         src/AAF_buffer.c    include/AAF_buffer.h
@@ -23,6 +22,7 @@ set(SOURCES_common
         src/zeros_array.c   include/zeros_array.h
         src/shared_malloc.c include/shared_malloc.h
         )
+set(SOURCES_all ${SOURCES_common})
 
 set(ALL_TARGETS)
 file(GLOB TARGETS_CMAKE "cmake/build_*.cmake")
@@ -31,12 +31,12 @@ foreach(target_file ${TARGETS_CMAKE})
 endforeach()
 add_custom_target(_buid_all_ ALL DEPENDS ${ALL_TARGETS})
 
+list(APPEND SOURCES_all res/resources.rc.in)
+
 add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/res/resources.rc
         COMMAND ${CMAKE_COMMAND}
             -DPATH_FILE_VERSION_INFO="${CMAKE_CURRENT_SOURCE_DIR}/res/resources.rc"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_version.cmake"
-        DEPENDS
-            ${SOURCES_AAF_service} ${SOURCES_AAF_block_lib} ${SOURCES_AAF_test} ${SOURCES_common}
-            ${CMAKE_CURRENT_SOURCE_DIR}/res/resources.rc.in
+        DEPENDS ${SOURCES_all}
         )

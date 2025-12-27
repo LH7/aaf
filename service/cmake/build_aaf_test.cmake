@@ -9,3 +9,4 @@ add_executable(AAF_test
 target_include_directories(AAF_test PRIVATE include)
 
 list(APPEND ALL_TARGETS AAF_test)
+list(APPEND SOURCES_all ${SOURCES_AAF_test})

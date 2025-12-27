@@ -12,3 +12,4 @@ add_executable(AAF_service
 target_include_directories(AAF_service PRIVATE include)
 
 list(APPEND ALL_TARGETS AAF_service)
+list(APPEND SOURCES_all ${SOURCES_AAF_service})
