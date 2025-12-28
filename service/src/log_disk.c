@@ -70,12 +70,12 @@ void LogAAFBufferStat(const wchar_t *filename, const AAF_buffer_t *AAFb)
     char date_str[32];
     get_date(date_str);
     fprintf(file,
-        "%s,rqs,%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64"\n",
+        "%s,rqs,%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64",%"PRId64"\n",
         date_str,
         AAFb->request.PID, AAFb->request.hFile, AAFb->request.blockSize, AAFb->request.alignSize,
         AAFb->result.success, AAFb->result.statusCode,
         AAFb->stats.fileLength, AAFb->stats.fileFragments, AAFb->stats.allocOffset, AAFb->stats.allocTime,
-        AAFb->stats.searchSkip, AAFb->stats.searchTotal, AAFb->stats.moveAttempts
+        AAFb->stats.searchSkip, AAFb->stats.searchTotal, AAFb->stats.moveAttempts, AAFb->stats.moveTime
     );
     fclose(file);
 }
@@ -92,7 +92,7 @@ void LogAAFBufferHeaders(const wchar_t *filename)
     char date_str[32];
     get_date(date_str);
     fprintf(file,
-        "%s,hdr,request.PID,request.hFile,request.blockSize,request.alignSize,result.success,result.statusCode,stats.fileLength,stats.fileFragments,stats.allocOffset,stats.allocTime,stats.searchSkip,stats.searchTotal,stats.moveAttempts\n",
+        "%s,hdr,request.PID,request.hFile,request.blockSize,request.alignSize,result.success,result.statusCode,stats.fileLength,stats.fileFragments,stats.allocOffset,stats.allocTime,stats.searchSkip,stats.searchTotal,stats.moveAttempts,stats.moveTime\n",
         date_str
     );
     fclose(file);

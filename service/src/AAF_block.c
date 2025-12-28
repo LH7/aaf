@@ -15,7 +15,7 @@
 // 8*8 кластеров это минимальный блок без ошибки
 #define FAST_CHECK_BITMAP_BYTES 8
 
-static HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
+static inline HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
 {
     wchar_t filePath[MAX_PATH];
 
@@ -36,7 +36,7 @@ static HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
 }
 
 // Пока не знаю хочу ли оптимизировать с функцией выше
-static DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
+static inline DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
 {
     wchar_t filePath[MAX_PATH];
 
@@ -64,7 +64,7 @@ static DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
     return lpSectorsPerCluster * lpBytesPerSector;
 }
 
-static int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, LONGLONG *pCheckedStartingLcn_c8, LONGLONG *pCheckedBlockLength_c8, LONGLONG *pBitmapSize_c8, int *pIsFreeBlock)
+static inline int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, LONGLONG *pCheckedStartingLcn_c8, LONGLONG *pCheckedBlockLength_c8, LONGLONG *pBitmapSize_c8, int *pIsFreeBlock)
 {
     int ret = 0;
     
@@ -106,7 +106,7 @@ err_aaf_check_free_block_in_bitmap:
     return ret;
 }
 
-static int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
+static inline int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
 {
     int ret = 0;
 
@@ -152,7 +152,7 @@ err_aaf_get_file_extents:
     return ret;
 }
 
-static int AAF_move_extent(HANDLE hVolume, MOVE_FILE_DATA *pMoveFileData)
+static inline int AAF_move_extent(HANDLE hVolume, MOVE_FILE_DATA *pMoveFileData)
 {
     int ret = 0;
 
@@ -179,7 +179,7 @@ err_aaf_move_file_clusters:
     return ret;
 }
 
-static LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents_num)
+static inline LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents_num)
 {
     LARGE_INTEGER currentVcn = pRPB->StartingVcn;
     LONGLONG ret = 0;
@@ -193,7 +193,7 @@ static LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents
     return ret;
 }
 
-static LARGE_INTEGER get_file_last_extent_vcn(RETRIEVAL_POINTERS_BUFFER *pRPB)
+static inline LARGE_INTEGER get_file_last_extent_vcn(RETRIEVAL_POINTERS_BUFFER *pRPB)
 {
     if (pRPB->ExtentCount < 2) {
         return pRPB->StartingVcn;
@@ -211,6 +211,7 @@ static int get_file_size_and_extents(HANDLE hFile, LARGE_INTEGER *file_size, RET
 int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLONG *pStatusCode, AAF_stats_t *pStats)
 {
     LONGLONG qp_timer_start, qp_timer_end;
+    LONGLONG qp_timer_move_start = 0, qp_timer_move_end = 0;
     qp_timer_start = qp_time_get();
 
     int res;
@@ -352,7 +353,9 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
             pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
             //printf("move last cluster to: %"PRId64"\n", pMoveFileData.StartingLcn.QuadPart * 4096);
 
+            qp_timer_move_start = qp_time_get();
             res = AAF_move_extent(hVolume, &pMoveFileData);
+            qp_timer_move_end = qp_time_get();
 
             //res = 0;
             if (res == 0) {
@@ -421,6 +424,7 @@ err_aaf_alloc_block:
 
     qp_timer_end = qp_time_get();
     pStats->allocTime = qp_timer_diff_100ns(qp_timer_start, qp_timer_end);
+    pStats->moveTime = qp_timer_diff_100ns(qp_timer_move_start, qp_timer_move_end);
 
     shared_VirtualAlloc(0); // аналог free
     return status_code >= 0;
