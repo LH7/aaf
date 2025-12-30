@@ -78,7 +78,7 @@ static inline int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG Starti
     bufferSize = VOLUME_BITMAP_HEADER_SIZE + BlockLength_c8;
 
     // в данном случае буфер нужен только тут  поэтому используем грязный буфер без реаллокации
-    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_VirtualAlloc(bufferSize);
+    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_malloc(bufferSize, SM_BUFFER_COMMON);
 
     if (pvb_buffer == NULL) {
         ret = -1;
@@ -102,7 +102,6 @@ static inline int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG Starti
     *pIsFreeBlock = is_all_zeros_array(pvb_buffer->Buffer, *pCheckedBlockLength_c8);
 
 err_aaf_check_free_block_in_bitmap:
-    //if (pvb_buffer != NULL) free(pvb_buffer);
     return ret;
 }
 
@@ -117,7 +116,7 @@ static inline int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER *
     
     while (1) {
         // используем грязный буфер, нам нужен результат только одной функции
-        *ppBuffer = shared_VirtualAlloc(bufferSize);
+        *ppBuffer = shared_malloc(bufferSize, SM_BUFFER_COMMON);
         if (!*ppBuffer) {
             ret = -1;
             goto err_aaf_get_file_extents;
@@ -426,7 +425,9 @@ err_aaf_alloc_block:
     pStats->allocTime = qp_timer_diff_100ns(qp_timer_start, qp_timer_end);
     pStats->moveTime = qp_timer_diff_100ns(qp_timer_move_start, qp_timer_move_end);
 
-    shared_VirtualAlloc(0); // аналог free
+    // аналог free
+    shared_malloc(0, SM_BUFFER_COMMON);
+
     return status_code >= 0;
 }
 
