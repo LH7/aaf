@@ -7,6 +7,13 @@
 
 #define MOVE_FILE_MAX_RETRIES 3
 
+// Идет замер времени операций чтения битмапа
+// Если _самое_последнее_ чтение больше в X раз чем самое длинное из прошлых то это не кеш
+#define THRESHOLD_X_TIMES_FOR_NON_CACHED_OP 2
+
+// Сколько блоков нужно закешировать вперед
+#define BLOCKS_TO_PREFETCH 10
+
 // Два 8 байтовых числа без заглушки буфера
 // LARGE_INTEGER StartingLcn;
 // LARGE_INTEGER BitmapSize;
@@ -73,12 +80,12 @@ static inline int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG Starti
     
     LARGE_INTEGER         StartingLcn;
     VOLUME_BITMAP_BUFFER *pvb_buffer;
-    
+
     StartingLcn.QuadPart = StartingLcn_c8 * 8;
     bufferSize = VOLUME_BITMAP_HEADER_SIZE + BlockLength_c8;
 
     // в данном случае буфер нужен только тут  поэтому используем грязный буфер без реаллокации
-    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_malloc(bufferSize, SM_BUFFER_COMMON);
+    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_malloc(bufferSize, SM_BUFFER_COMMON, SM_DATA_DISCARD);
 
     if (pvb_buffer == NULL) {
         ret = -1;
@@ -116,7 +123,7 @@ static inline int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER *
     
     while (1) {
         // используем грязный буфер, нам нужен результат только одной функции
-        *ppBuffer = shared_malloc(bufferSize, SM_BUFFER_COMMON);
+        *ppBuffer = shared_malloc(bufferSize, SM_BUFFER_COMMON, SM_DATA_DISCARD);
         if (!*ppBuffer) {
             ret = -1;
             goto err_aaf_get_file_extents;
@@ -207,10 +214,96 @@ static int get_file_size_and_extents(HANDLE hFile, LARGE_INTEGER *file_size, RET
     return 1;
 }
 
+// сверяется текущее вычисленное время и прошлое максимальное
+// threshold_x_times - во сколько раз максимальные прошлый замер должен быть меньше текущего
+// 0 - сброс статистики
+static int is_non_cache_operation(size_t threshold_x_times)
+{
+    static LONGLONG prev_time, prev_max_time;
+    LONGLONG current_time, operation_time;
+    int is_non_cache = 0;
+
+    current_time = qp_time_get();
+    if (threshold_x_times == 0) {
+       prev_max_time = 0;
+    } else {
+        operation_time = qp_timer_diff_100ns(prev_time, current_time);
+        //printf("OP time: %"PRId64"\n", operation_time);
+        is_non_cache = operation_time > prev_max_time * threshold_x_times;
+        if (prev_max_time < operation_time) prev_max_time = operation_time;
+    }
+
+    prev_time = current_time;
+    return is_non_cache;
+}
+
+static int find_free_block(
+        HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, size_t BlocksToFind,
+        LONGLONG *CheckedStartingLcn_c8, LONGLONG *searchSkip, LONGLONG *searchTotal,
+        size_t *FreeBlocksFound, size_t *IsLastReadNonCached
+) {
+    LONGLONG CheckedBlockLength_c8;
+    LONGLONG BitmapSize_c8;
+    int IsFreeBlock;
+
+    is_non_cache_operation(0);
+    while (1)
+    {
+        if (searchTotal != NULL) (*searchTotal)++;
+
+        // суть в том чтобы не читать весь битмап при прыжках по заполненному диску
+        // Больще оптимизация для самого алллокатора
+        //printf("Search free block (cluster) at: %"PRId64"\n", StartingLcn_c8);
+        if (AAF_check_free_block_in_bitmap(
+                hVolume, StartingLcn_c8, FAST_CHECK_BITMAP_BYTES,
+                CheckedStartingLcn_c8, &CheckedBlockLength_c8,
+                &BitmapSize_c8, &IsFreeBlock
+        )) {
+            return 1;
+        }
+        *IsLastReadNonCached = is_non_cache_operation(THRESHOLD_X_TIMES_FOR_NON_CACHED_OP);
+
+        //printf("Checked clusters: %"PRId64"\n", CheckedBlockLength_c8);
+        if (!IsFreeBlock) {
+            if (searchSkip != NULL) (*searchSkip)++;
+            //printf("BitmapSize_c8: %"PRId64", block: %"PRId64"\n", BitmapSize_c8, BlockLength_c8);
+            //printf("Non free, skip: %"PRId64"\n", BlockLength_c8);
+            // в данном случае скипается весь блок хоть запрашивали и 8 кластеров
+            StartingLcn_c8 = *CheckedStartingLcn_c8 + BlockLength_c8;
+            if (BitmapSize_c8 <= BlockLength_c8) break;
+            continue;
+        }
+
+        //printf("Search full free block at: %"PRId64"\n", StartingLcn_c8 * 8 * 4096);
+
+        // Если начало пустое то проверяем уже весь блок
+        if (AAF_check_free_block_in_bitmap(
+                hVolume, StartingLcn_c8, BlockLength_c8,
+                CheckedStartingLcn_c8, &CheckedBlockLength_c8,
+                &BitmapSize_c8, &IsFreeBlock
+        )) {
+            return 1;
+        }
+        *IsLastReadNonCached = is_non_cache_operation(THRESHOLD_X_TIMES_FOR_NON_CACHED_OP);
+
+        if (IsFreeBlock) {
+            (*FreeBlocksFound)++;
+            //printf("FreeBlocksFound: %d, BlocksToFind: %d\n", (int)(*FreeBlocksFound), (int)BlocksToFind);
+            if (*FreeBlocksFound >= BlocksToFind) return 0;
+        }
+
+        StartingLcn_c8 = *CheckedStartingLcn_c8 + CheckedBlockLength_c8;
+        if (BitmapSize_c8 == CheckedBlockLength_c8) break;
+    }
+
+    return 0;
+}
+
 int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLONG *pStatusCode, AAF_stats_t *pStats)
 {
     LONGLONG qp_timer_start, qp_timer_end;
     LONGLONG qp_timer_move_start = 0, qp_timer_move_end = 0;
+    LONGLONG qp_timer_prefetch_start = 0, qp_timer_prefetch_end = 0;
     qp_timer_start = qp_time_get();
 
     int res;
@@ -291,95 +384,55 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
 
-    int IsFreeBlock;
-
     LONGLONG StartingLcn_c8 = 0;
     // битмап содержит в каждом байте по 8 кластеров
     LONGLONG BlockLength_c8 = alignSize / cluster_size / 8LL;
     LONGLONG CheckedStartingLcn_c8;
-    LONGLONG CheckedBlockLength_c8;
-    LONGLONG BitmapSize_c8;
 
     MOVE_FILE_DATA pMoveFileData;
     pMoveFileData.FileHandle   = hFile;
     pMoveFileData.StartingVcn  = get_file_last_extent_vcn(pRPB_shared);
     pMoveFileData.ClusterCount = 1; // тут всегда 1 кластер, ради этого и уменьшали
 
-    int free_block_found = 0;
+    size_t FreeBlocksFound = 0, IsLastReadNonCached = 0;
+
     while (1)
     {
-        pStats->searchTotal++;
-
-        // суть в том чтобы не читать весь битмап при прыжках по заполненному диску
-        // Больще оптимизация для самого алллокатора
-        //printf("Search free block (cluster) at: %"PRId64"\n", StartingLcn_c8);
-        if (AAF_check_free_block_in_bitmap(
-            hVolume, StartingLcn_c8, FAST_CHECK_BITMAP_BYTES,
-            &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
-            &BitmapSize_c8, &IsFreeBlock
+        if (find_free_block(
+                hVolume, StartingLcn_c8, BlockLength_c8, 1,
+                &CheckedStartingLcn_c8, &pStats->searchSkip, &pStats->searchTotal,
+                &FreeBlocksFound, &IsLastReadNonCached
         )) {
             status_code = -7;
             goto err_aaf_alloc_block;
         }
-        //printf("Checked clusters: %"PRId64"\n", CheckedBlockLength_c8);
-        if (!IsFreeBlock) {
-            pStats->searchSkip++;
-            //printf("BitmapSize_c8: %"PRId64", block: %"PRId64"\n", BitmapSize_c8, BlockLength_c8);
-            //printf("Non free, skip: %"PRId64"\n", BlockLength_c8);
-            // в данном случае скипается весь блок хоть запрашивали и 8 кластеров
-            StartingLcn_c8 = CheckedStartingLcn_c8 + BlockLength_c8;
-            if (BitmapSize_c8 <= BlockLength_c8) break;
-            continue;
+        StartingLcn_c8 = CheckedStartingLcn_c8; // для следующей итерации
+        if (FreeBlocksFound == 0) break;
+
+        // пробуем переместить кластер
+        pStats->moveAttempts++;
+        pMoveFileData.StartingLcn.QuadPart = StartingLcn_c8 * 8LL;
+        qp_timer_move_start = qp_time_get();
+        res = AAF_move_extent(hVolume, &pMoveFileData);
+        qp_timer_move_end = qp_time_get();
+        //printf("move last cluster to: %"PRId64"\n", pMoveFileData.StartingLcn.QuadPart * 4096);
+
+        if (res == 0) {
+            pStats->allocOffset = pMoveFileData.StartingLcn.QuadPart * cluster_size;
+            break;
         }
+        FreeBlocksFound = 0; // блок мы нашди но не переместился, повторяем
 
-        //printf("Search full free block at: %"PRId64"\n", StartingLcn_c8 * 8 * 4096);
-        
-        // Если начало пустое то проверяем уже весь блок
-        if (AAF_check_free_block_in_bitmap(
-            hVolume, StartingLcn_c8, BlockLength_c8,
-            &CheckedStartingLcn_c8, &CheckedBlockLength_c8,
-            &BitmapSize_c8, &IsFreeBlock
-        )) {
-            status_code = -7;
-            goto err_aaf_alloc_block;
+        if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES) {
+            // По сути блок мы нашли, просто что-то не переместилсо...
+            // вообще этого быть не должно, просто в логах будет 3 попытки и 0 в позиции
+            // так же используем обычное расширение, поэтому найдено не пишем
+            break;
         }
-
-        //IsFreeBlock = 0;
-
-        if (IsFreeBlock) {
-            // пробуем переместить кластер
-            pStats->moveAttempts++;
-            pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
-            //printf("move last cluster to: %"PRId64"\n", pMoveFileData.StartingLcn.QuadPart * 4096);
-
-            qp_timer_move_start = qp_time_get();
-            res = AAF_move_extent(hVolume, &pMoveFileData);
-            qp_timer_move_end = qp_time_get();
-
-            //res = 0;
-            if (res == 0) {
-                pStats->allocOffset = pMoveFileData.StartingLcn.QuadPart * cluster_size;
-                free_block_found = 1;
-                break;
-            }
-            if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES) {
-                // По сути блок мы нашли, просто что-то не переместилсо...
-                // вообще этого быть не должно, просто в логах будет 3 попытки и 0 в позиции
-                // так же используем обычное расширение, поэтому найдено не пишем
-                break;
-            }
-            //printf("Can't move, retry\n");
-        }
-
-        StartingLcn_c8 = CheckedStartingLcn_c8 + CheckedBlockLength_c8;
-        if (BitmapSize_c8 == CheckedBlockLength_c8) break;
+        //printf("Can't move, retry\n");
     }
 
-//    printf("BitmapSize_c8: %"PRId64", CheckedBlockLength_c8: %"PRId64"\n", BitmapSize_c8, CheckedBlockLength_c8);
-//    printf("BitmapSize_c8: %"PRId64", BlockLength_c8: %"PRId64"\n", BitmapSize_c8, BlockLength_c8);
-//    printf("free_block_found: %d\n", free_block_found);
-
-    if (!free_block_found) {
+    if (FreeBlocksFound == 0) {
         // если блок не найден то просто оставляем как есть
         // увеличиваем средствами ntfs до планированного
 
@@ -393,6 +446,22 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
             goto err_aaf_alloc_block;
         }
         status_code = 2;
+    }
+
+    // если последнее чтение было не из кеша битмапа то находим еще 10 новых
+    // ну или сколько найдется, энивей ловим только ошибку
+    if (IsLastReadNonCached) {
+        // printf("Need prefetch\n");
+        qp_timer_prefetch_start = qp_time_get();
+        if (find_free_block(
+                hVolume, StartingLcn_c8, BlockLength_c8, BLOCKS_TO_PREFETCH,
+                &CheckedStartingLcn_c8, NULL, NULL,
+                &FreeBlocksFound, &IsLastReadNonCached
+        )) {
+            status_code = -7;
+            goto err_aaf_alloc_block;
+        }
+        qp_timer_prefetch_end = qp_time_get();
     }
 
     // Теперь увеличиваем размер до планируемого
@@ -424,9 +493,12 @@ err_aaf_alloc_block:
     qp_timer_end = qp_time_get();
     pStats->allocTime = qp_timer_diff_100ns(qp_timer_start, qp_timer_end);
     pStats->moveTime = qp_timer_diff_100ns(qp_timer_move_start, qp_timer_move_end);
+    if (qp_timer_prefetch_end != 0) {
+        pStats->prefetchTime = qp_timer_diff_100ns(qp_timer_prefetch_start, qp_timer_prefetch_end);
+    }
 
     // аналог free
-    shared_malloc(0, SM_BUFFER_COMMON);
+    shared_malloc(0, SM_BUFFER_COMMON, SM_DATA_DISCARD);
 
     return status_code >= 0;
 }

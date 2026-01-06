@@ -111,6 +111,7 @@ class AAFStatsT(ctypes.Structure):
     searchTotal:    ctypes.c_int64
     moveAttempts:   ctypes.c_int64
     moveTime:       ctypes.c_int64
+    prefetchTime:   ctypes.c_int64
 
 
 @add_ctype_fields_pack1

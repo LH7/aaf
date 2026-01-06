@@ -45,6 +45,7 @@ def aaf_decorator_file_output(cls):
         log.debug(f"    SearchTotal: {stats.searchTotal}")
         log.debug(f"   MoveAttempts: {stats.moveAttempts}")
         log.debug(f"       MoveTime: {stats.moveTime / 10000}ms")
+        log.debug(f"   PrefetchTime: {stats.prefetchTime / 10000}ms")
 
     @functools.wraps(orig_open)
     def aaf_open(self):

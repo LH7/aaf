@@ -36,6 +36,7 @@ typedef struct {
     int64_t  searchTotal;
     int64_t  moveAttempts;
     int64_t  moveTime;
+    int64_t  prefetchTime;
 } AAF_stats_t;
 
 typedef struct {

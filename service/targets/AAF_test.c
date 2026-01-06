@@ -47,7 +47,7 @@ static int AAF_check_free_block_in_bitmap(
     bufferSize = VOLUME_BITMAP_HEADER_SIZE + BlockLength_c8;
 
     // в данном случае буфер нужен только тут  поэтому используем грязный буфер без реаллокации
-    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_VirtualAlloc(bufferSize);
+    pvb_buffer = (VOLUME_BITMAP_BUFFER*)shared_malloc(bufferSize, SM_BUFFER_COMMON, SM_DATA_DISCARD) ;
 
     if (pvb_buffer == NULL) {
         ret = -1;

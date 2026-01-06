@@ -21,8 +21,8 @@ static void finishRequest()
     printf("Offset: %"PRId64", Time: %"PRId64", SearchSkip: %"PRId64", SearchTotal: %"PRId64"\n",
            AAF.pBuffer->stats.allocOffset, AAF.pBuffer->stats.allocTime,
            AAF.pBuffer->stats.searchSkip, AAF.pBuffer->stats.searchTotal);
-    printf("MoveAttempts: %"PRId64", MoveTime: %"PRId64"\n",
-           AAF.pBuffer->stats.moveAttempts, AAF.pBuffer->stats.moveTime);
+    printf("MoveAttempts: %"PRId64", MoveTime: %"PRId64", PrefetchTime: %"PRId64"\n",
+           AAF.pBuffer->stats.moveAttempts, AAF.pBuffer->stats.moveTime, AAF.pBuffer->stats.prefetchTime);
     // обнуление буфера перед следующим реквестом
     // на случай если какая то из следующих программ не запишет свои данные
     ZeroMemory(&AAF.pBuffer->request, sizeof(AAF_request_t));

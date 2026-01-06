@@ -42,7 +42,7 @@ class AlignedBlockRet:
     def __init__(self,
                  success: int, status_code: int, file_length: int = 0, file_fragments: int = 0,
                  alloc_offset: int = 0, alloc_time: int = 0, search_skip: int = 0, search_total: int = 0,
-                 move_attempts: int = 0, move_time: int = 0
+                 move_attempts: int = 0, move_time: int = 0, prefetch_time: int = 0
                  ):
         self.success = success
         self.statusCode = status_code
@@ -55,6 +55,7 @@ class AlignedBlockRet:
         self.searchTotal = search_total
         self.moveAttempts = move_attempts
         self.moveTime = move_time
+        self.prefetchTime = prefetch_time
 
 
 def new_block(file_descriptor, block_size, align_size) -> AlignedBlockRet:
@@ -106,7 +107,8 @@ def new_block(file_descriptor, block_size, align_size) -> AlignedBlockRet:
             aaf_buffer.stats.fileLength, aaf_buffer.stats.fileFragments,
             aaf_buffer.stats.allocOffset, aaf_buffer.stats.allocTime,
             aaf_buffer.stats.searchSkip, aaf_buffer.stats.searchTotal,
-            aaf_buffer.stats.moveAttempts, aaf_buffer.stats.moveTime
+            aaf_buffer.stats.moveAttempts, aaf_buffer.stats.moveTime,
+            aaf_buffer.stats.prefetchTime
         )
 
     except KeyboardInterrupt:
