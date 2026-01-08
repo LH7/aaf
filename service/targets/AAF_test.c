@@ -3,7 +3,6 @@
 #include "qp_timer.h"
 #include "shared_malloc.h"
 //#include "zeros_array.h"
-#include "func_dyn.h"
 #include <inttypes.h>
 
 #define VOLUME_BITMAP_HEADER_SIZE 16
@@ -12,7 +11,7 @@ static HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
 {
     wchar_t filePath[MAX_PATH];
 
-    DWORD res = dyn_GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
+    DWORD res = GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
     if (res == 0) {
         return INVALID_HANDLE_VALUE;
     }
@@ -185,33 +184,6 @@ int wmain() {
     CloseHandle(hVolume);
     CloseHandle(hFile);
 
-    return 0;
-
-    LONGLONG block_size = 100*1024*1024ULL;
-//    LONGLONG block_size = 16281ULL*1024*1024*1024;
-    LONGLONG align_size = 10*1024*1024*1024ULL;
-//    LONGLONG align_size = 1024*1024ULL;
-
-    AAF_stats_t AAF_Stat = {};
-    AAF_result_t AAF_Result = {};
-    int iterations = 1;
-    LONGLONG total_time = 0;
-    LARGE_INTEGER zero_size = {};
-    for (int i = 0; i < iterations; i++)
-    {
-        AAF_set_file_size(hFile, zero_size);
-        AAF_Result.success = AAF_alloc_block(
-                hFile, block_size, align_size, &AAF_Result.statusCode, &AAF_Stat
-        );
-
-        printf("Success: %"PRId64", code %"PRId64", FileLength: %"PRId64", Fragments: %"PRId64"\n", AAF_Result.success, AAF_Result.statusCode, AAF_Stat.fileLength, AAF_Stat.fileFragments);
-        printf("Offset: %"PRId64", Time: %.4f, SearchSkip: %"PRId64", SearchTotal: %"PRId64", MoveAttempts: %"PRId64"\n", AAF_Stat.allocOffset, (double)AAF_Stat.allocTime / 10000, AAF_Stat.searchSkip, AAF_Stat.searchTotal, AAF_Stat.moveAttempts);
-        total_time += AAF_Stat.allocTime;
-
-    }
-    printf("TimeAVG: %.4f\n", (double)total_time / iterations / 10000);
-
-    CloseHandle(hFile);
     return 0;
 }
 

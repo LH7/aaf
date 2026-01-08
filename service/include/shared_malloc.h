@@ -13,6 +13,8 @@ typedef enum {
     SM_DATA_KEEP,
 } sm_data_keep_t;
 
+#define SM_DATA_FREE 0
+
 void* shared_malloc(size_t new_size, sm_buffer_idx_t buffer_idx, sm_data_keep_t data_keep);
 
 #endif
