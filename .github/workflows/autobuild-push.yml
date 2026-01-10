@@ -2,7 +2,7 @@ name: Autobuild on push
 
 on:
   push:
-    branches: [ "tests" ]
+    branches: [ "main", "dev" ]
   
 jobs:
   build:
