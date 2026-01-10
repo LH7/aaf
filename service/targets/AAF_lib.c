@@ -1,5 +1,6 @@
 #include "AAF_block.h"
 #include "is_admin.h"
+#include "qp_timer.h"
 
 #define EXPORT __declspec(dllexport)
 
@@ -15,5 +16,8 @@ EXPORT WINAPI int is_admin()
 
 EXPORT WINAPI BOOL DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
-	return TRUE;
+    if (fdwReason == DLL_PROCESS_ATTACH) {
+        qp_timer_init();
+    }
+    return TRUE;
 }

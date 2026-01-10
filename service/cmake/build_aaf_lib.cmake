@@ -1,4 +1,6 @@
 
+set(CMAKE_SHARED_LIBRARY_PREFIX "")
+
 set(SOURCES_AAF_lib
         targets/AAF_lib.c
         )
@@ -10,3 +12,4 @@ add_library(AAF_lib SHARED
 target_include_directories(AAF_lib PRIVATE include)
 
 list(APPEND ALL_TARGETS AAF_lib)
+list(APPEND SOURCES_all ${SOURCES_AAF_lib})

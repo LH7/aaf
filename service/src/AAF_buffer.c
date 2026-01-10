@@ -1,7 +1,7 @@
 #include "AAF_buffer.h"
 #include <sddl.h>
 
-static int FillSecurityAttributes(SECURITY_ATTRIBUTES *pSA)
+static inline int FillSecurityAttributes(SECURITY_ATTRIBUTES *pSA)
 {
     PSECURITY_DESCRIPTOR pSD;
     

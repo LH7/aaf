@@ -12,7 +12,7 @@ static HANDLE CurrentServiceStopEvent = NULL;
 static FUNC_PTR_WMAIN CurrentServiceMainLoop = NULL;
 static FUNC_PRR_STOP_SERVICE_CB CurrentServiceStopServiceCb = NULL;
 
-static void _disableStdio()
+static inline void _disableStdio()
 {
     freopen("NUL", "r", stdin);
     freopen("NUL", "w", stdout);

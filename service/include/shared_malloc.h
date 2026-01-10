@@ -3,7 +3,18 @@
 
 #include <stdio.h>
 
-void* shared_malloc(size_t new_size);
-void* shared_VirtualAlloc(size_t new_size);
+typedef enum {
+    SM_BUFFER_COMMON,
+    _SHARED_MALLOC_BUFFERS,
+} sm_buffer_idx_t;
+
+typedef enum {
+    SM_DATA_DISCARD,
+    SM_DATA_KEEP,
+} sm_data_keep_t;
+
+#define SM_DATA_FREE 0
+
+void* shared_malloc(size_t new_size, sm_buffer_idx_t buffer_idx, sm_data_keep_t data_keep);
 
 #endif

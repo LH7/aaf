@@ -40,10 +40,12 @@ def aaf_decorator_file_output(cls):
         log.debug(f"     FileLength: {stats.fileLength}")
         log.debug(f"  FileFragments: {stats.fileFragments}")
         log.debug(f"    AllocOffset: {stats.allocOffset}")
+        log.debug(f"      AllocTime: {stats.allocTime / 10000}ms")
         log.debug(f"     SearchSkip: {stats.searchSkip}")
         log.debug(f"    SearchTotal: {stats.searchTotal}")
         log.debug(f"   MoveAttempts: {stats.moveAttempts}")
-        log.debug(f"         c time: {stats.allocTime / 10000}ms")
+        log.debug(f"       MoveTime: {stats.moveTime / 10000}ms")
+        log.debug(f"   PrefetchTime: {stats.prefetchTime / 10000}ms")
 
     @functools.wraps(orig_open)
     def aaf_open(self):

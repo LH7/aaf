@@ -3,7 +3,7 @@
 
 wchar_t *LogFileName = NULL;
 
-static int makeServiceCmdLine(wchar_t *logPath, wchar_t *pSvcProcessCommandLine)
+static inline int makeServiceCmdLine(wchar_t *logPath, wchar_t *pSvcProcessCommandLine)
 {
     wchar_t currentProcessPath[MAX_PATH];
     if (!GetModuleFileNameW(NULL, currentProcessPath, MAX_PATH)) {
@@ -17,7 +17,7 @@ static int makeServiceCmdLine(wchar_t *logPath, wchar_t *pSvcProcessCommandLine)
     return 0;
 }
 
-static int PrintHelp(int argc, wchar_t* argv[])
+static inline int PrintHelp(int argc, wchar_t* argv[])
 {
     if (argc <= 1) return 0;
     if (wcscmp(argv[1], L"help") != 0) return 0;
