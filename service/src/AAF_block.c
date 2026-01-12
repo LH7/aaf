@@ -236,7 +236,7 @@ static int is_non_cache_operation(size_t threshold_x_times)
 static int find_free_block(
         HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, size_t BlocksToFind,
         LONGLONG *CheckedStartingLcn_c8, LONGLONG *searchSkip, LONGLONG *searchTotal,
-        size_t *FreeBlocksFound, size_t *IsLastReadNonCached
+        size_t *FreeBlocksFound, int *IsLastReadNonCached, int *IsEndOfVolume
 ) {
     LONGLONG CheckedBlockLength_c8;
     LONGLONG BitmapSize_c8;
@@ -257,16 +257,15 @@ static int find_free_block(
             return 1;
         }
         *IsLastReadNonCached = is_non_cache_operation(THRESHOLD_X_TIMES_FOR_NON_CACHED_OP);
+        *IsEndOfVolume = BitmapSize_c8 <= BlockLength_c8;
 
         if (!IsFreeBlock) {
             if (searchSkip != NULL) (*searchSkip)++;
-            // Если начало не пустое в данном случае скипается весь блок хоть запрашивали и 8 кластеров
+            if (*IsEndOfVolume) return 0;
             StartingLcn_c8 = *CheckedStartingLcn_c8 + BlockLength_c8;
-            if (BitmapSize_c8 <= BlockLength_c8) break;
             continue;
         }
 
-        // Если начало пустое то проверяем уже весь блок
         if (AAF_check_free_block_in_bitmap(
                 hVolume, StartingLcn_c8, BlockLength_c8,
                 CheckedStartingLcn_c8, &CheckedBlockLength_c8,
@@ -275,6 +274,7 @@ static int find_free_block(
             return 1;
         }
         *IsLastReadNonCached = is_non_cache_operation(THRESHOLD_X_TIMES_FOR_NON_CACHED_OP);
+        *IsEndOfVolume = BitmapSize_c8 <= CheckedBlockLength_c8;
 
         if (IsFreeBlock) {
             (*FreeBlocksFound)++;
@@ -282,10 +282,8 @@ static int find_free_block(
         }
 
         StartingLcn_c8 = *CheckedStartingLcn_c8 + CheckedBlockLength_c8;
-        if (BitmapSize_c8 == CheckedBlockLength_c8) break;
+        if (*IsEndOfVolume) return 0;
     }
-
-    return 0;
 }
 
 static int AAF_set_file_size(HANDLE hFile, LARGE_INTEGER new_size)
@@ -386,7 +384,8 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     pMoveFileData.StartingVcn  = get_file_last_extent_vcn(pRPB_shared);
     pMoveFileData.ClusterCount = 1;
 
-    size_t FreeBlocksFound = 0, IsLastReadNonCached = 0;
+    size_t FreeBlocksFound = 0;
+    int IsLastReadNonCached = 0, IsEndOfVolume = 0;
 
     while (1)
     {
@@ -394,21 +393,19 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         if (find_free_block(
                 hVolume, StartingLcn_c8, BlockLength_c8, 1,
                 &CheckedStartingLcn_c8, &pStats->searchSkip, &pStats->searchTotal,
-                &FreeBlocksFound, &IsLastReadNonCached
+                &FreeBlocksFound, &IsLastReadNonCached, &IsEndOfVolume
         )) {
             status_code = -7;
             goto err_aaf_alloc_block;
         }
-
-        // StartingLcn_c8 смещается в основном для следующей итерации если будет ошибка перемещения кластера
-        // Плюс оно же нужно для префетча новых блоков ниже
-        // StartingLcn_c8 += CheckedStartingLcn_c8 перед find_free_block не делаем иначе можем выйти за границы битмапа
-        StartingLcn_c8 = CheckedStartingLcn_c8;
         if (FreeBlocksFound == 0) break;
 
-        // Пробуем переместить кластер
+        // Смещаем точку поиска для следующего поиска
+        StartingLcn_c8 = CheckedStartingLcn_c8 + BlockLength_c8;
+
+        // Пробуем переместить кластер, CheckedStartingLcn_c8 это актуальный адрес блока
         pStats->moveAttempts++;
-        pMoveFileData.StartingLcn.QuadPart = StartingLcn_c8 * 8LL;
+        pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
         qp_timer_move_start = qp_time_get();
         res = AAF_move_extent(hVolume, &pMoveFileData);
         qp_timer_move_end = qp_time_get();
@@ -417,15 +414,10 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
             break;
         }
 
-        // Блок мы нашди но не переместился
-        // Поэтому не помечаем как найденный
+        // Сюда мы попасть не должны, но вдруг бывают ошибки перемещений
         FreeBlocksFound = 0;
-
-        if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES) {
-            // вообще этого быть не должно, просто в логах будет MOVE_FILE_MAX_RETRIES попыток и 0 в позиции
-            // так же используем обычное расширение, поэтому сбрасываем найдено
-            break;
-        }
+        // Выходим если уже много ошибок или дошли до конца диска
+        if (pStats->moveAttempts == MOVE_FILE_MAX_RETRIES || IsEndOfVolume) break;
     }
 
     if (FreeBlocksFound == 0) {
@@ -452,23 +444,15 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
 
-    // Если последнее чтение битмапа было не из кеша
+    // Если последнее чтение битмапа было не из кеша и есть что читать
     // То читаем битмап до BLOCKS_TO_PREFETCH новых свободных блоков
     // ну или сколько найдется, энивей ловим только ошибку
-    if (IsLastReadNonCached) {
+    if (IsLastReadNonCached && !IsEndOfVolume) {
         qp_timer_prefetch_start = qp_time_get();
-
-        // StartingLcn_c8 это тот блок который мы только что прочитали и куда переместили кластер
-        // Он уже в кеше и заполнен, но читаем повторно
-        // Потому что иначе если был найден последний блок на диске то мы получим тут ошибку выхода за границы битмапа
-        // Впринципе эта ошибка ни на что не повлияет, можно не обрабатывать
-        // Но и одно лишнее чтение заполненного блока со скипом тоже погоды не сделает
-        // Поэтому не делаем StartingLcn_c8 += CheckedStartingLcn_c8;
-
         if (find_free_block(
                 hVolume, StartingLcn_c8, BlockLength_c8, BLOCKS_TO_PREFETCH,
                 &CheckedStartingLcn_c8, NULL, NULL,
-                &FreeBlocksFound, &IsLastReadNonCached
+                &FreeBlocksFound, &IsLastReadNonCached, &IsEndOfVolume
         )) {
             status_code = -7;
             goto err_aaf_alloc_block;

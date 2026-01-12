@@ -74,28 +74,35 @@ static int AAF_check_free_block_in_bitmap(
     return ret;
 }
 
-int wmain() {
+//void test_end_find(HANDLE hVolume)
+//{
+//    LONGLONG StartingLcn_c8;
+//    LONGLONG BlockLength_c8;
+//    size_t BlocksToFind;
+//    LONGLONG CheckedStartingLcn_c8 = 0;
+//    LONGLONG searchSkip = 0;
+//    LONGLONG searchTotal = 0;
+//    size_t FreeBlocksFound = 0;
+//    int IsLastReadNonCached = 0;
+//    int IsEndOfVolume = 0;
+//
+//    int ret;
+//
+//    StartingLcn_c8 = 0;
+//    BlockLength_c8 = 5ULL*1024*1024*1024 / 4096 / 8;
+//    BlocksToFind = 1000;
+//    ret = find_free_block(
+//            hVolume, StartingLcn_c8, BlockLength_c8, BlocksToFind,
+//            &CheckedStartingLcn_c8, &searchSkip, &searchTotal,
+//            &FreeBlocksFound, &IsLastReadNonCached, &IsEndOfVolume
+//    );
+//    printf("\nret: %d, StartingLcn_c8: %"PRId64", BlockLength_c8: %"PRId64", BlocksToFind: %"PRId64"\nCheckedStartingLcn_c8: %"PRId64", searchSkip: %"PRId64", searchTotal: %"PRId64",\nFreeBlocksFound: %d, IsLastReadNonCached: %d, IsEndOfVolume: %d\n",
+//           ret, StartingLcn_c8, BlockLength_c8, BlocksToFind, CheckedStartingLcn_c8, searchSkip, searchTotal, (int)FreeBlocksFound, IsLastReadNonCached, IsEndOfVolume);
+//
+//}
 
-    qp_timer_init();
-
-    HANDLE hFile = CreateFileW(
-            L"r:\\test.bin",
-            GENERIC_READ | GENERIC_WRITE, 0, // NOLINT(hicpp-signed-bitwise)
-            NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL
-    );
-    if (hFile == INVALID_HANDLE_VALUE) {
-        printf("Error open file\n");
-        return 0;
-    }
-
-    HANDLE hVolume = AAF_get_volume_handle_by_file_handle(hFile);
-    if (hVolume == INVALID_HANDLE_VALUE) {
-        printf("Error open volume\n");
-        return 0;
-    }
-
-    printf("hFile: %p, hVolume: %p\n", hFile, hVolume);
-
+void bench_bitmap_scan(HANDLE hVolume)
+{
     LONGLONG StartingLcn_c8, BlockLength_c8;
     LONGLONG CheckedStartingLcn_c8, CheckedBlockLength_c8;
     LONGLONG BitmapSize_c8;
@@ -103,14 +110,13 @@ int wmain() {
     int ret;
     size_t i;
 
-
     //void *dummy_buf = shared_VirtualAlloc(100*1024*1024); // чтобы не инициализировать каждый раз
 
     LONGLONG buffers_size[] = {
-        4096, 4096*2, 4096*3, 4096*4, 4096*5, 4096*6, 4096*7,
-        32768, 32768*2, 32768*3, 32768*4, 32768*5,
-        327680,
-        3276800, 32768 * 4096
+            4096, 4096*2, 4096*3, 4096*4, 4096*5, 4096*6, 4096*7,
+            32768, 32768*2, 32768*3, 32768*4, 32768*5,
+            327680,
+            3276800, 32768 * 4096
     };
 
     size_t total_calls;
@@ -178,6 +184,62 @@ int wmain() {
         LONGLONG time_to_proces = qp_timer_diff_100ns(init_time, end_time);
         printf("Calls: %d, Buffer_size: %"PRId64", Total time: %f\n", (int)total_calls, BlockLength_c8, (double)time_to_proces / 10000);
     }
+}
+
+void alloc_test(HANDLE hFile)
+{
+    int ret;
+    AAF_stats_t Stats;
+    LONGLONG blockSize, alignSize, StatusCode;
+
+    blockSize = 2ULL*1024*1024*1024;
+    alignSize = 3ULL*1024*1024*1024;
+
+    ret = AAF_alloc_block(hFile, blockSize, alignSize, &StatusCode, &Stats);
+
+    printf("Success: %"PRId64", code %"PRId64", FileLength: %"PRId64", Fragments: %"PRId64"\n",
+           (intmax_t)ret, StatusCode, Stats.fileLength, Stats.fileFragments);
+    printf("Offset: %"PRId64", Time: %"PRId64", SearchSkip: %"PRId64", SearchTotal: %"PRId64"\n",
+           Stats.allocOffset, Stats.allocTime,
+           Stats.searchSkip, Stats.searchTotal);
+    printf("MoveAttempts: %"PRId64", MoveTime: %"PRId64", PrefetchTime: %"PRId64"\n",
+           Stats.moveAttempts, Stats.moveTime, Stats.prefetchTime);
+
+}
+
+int wmain() {
+
+    qp_timer_init();
+
+    HANDLE hFile = CreateFileW(
+            L"t:\\test.bin",
+            GENERIC_READ | GENERIC_WRITE, 0, // NOLINT(hicpp-signed-bitwise)
+            NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL
+    );
+    if (hFile == INVALID_HANDLE_VALUE) {
+        printf("Error open file\n");
+        return 0;
+    }
+
+    HANDLE hVolume = AAF_get_volume_handle_by_file_handle(hFile);
+    if (hVolume == INVALID_HANDLE_VALUE) {
+        printf("Error open volume\n");
+        return 0;
+    }
+
+    printf("hFile: %p, hVolume: %p\n", hFile, hVolume);
+
+//    test_end_find(hVolume);
+//    return 0;
+
+//    bench_bitmap_scan(hVolume);
+//    return 0;
+
+//    LARGE_INTEGER new_size;
+//    new_size.QuadPart = 15ULL*1024*1024*1024*1024;
+//    AAF_set_file_size(hFile, new_size);
+
+    alloc_test(hFile);
 
     //dummy_buf = shared_VirtualAlloc(0);
 
