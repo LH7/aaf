@@ -45,7 +45,10 @@ foreach(target_file ${TARGETS_CMAKE})
 endforeach()
 add_custom_target(_buid_all_ ALL DEPENDS ${ALL_TARGETS})
 
-list(APPEND SOURCES_all res/resources.rc.in)
+list(APPEND SOURCES_all
+        res/manifest.xml
+        res/resources.rc.in
+        )
 
 add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/res/resources.rc

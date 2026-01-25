@@ -21,18 +21,35 @@
 // 8*8 кластеров это минимальный блок без ошибки
 #define FAST_CHECK_BITMAP_BYTES 8
 
-static inline HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
-{
-    wchar_t filePath[MAX_PATH];
+//
+// _SM_ - shared_malloc функции
+// префикс для функций использующих общий грязный буфер
+// результаты этих функций должны сохраняться отдельно либо использоваться до вызова следующей
+//
 
-    DWORD res = GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
-    if (res == 0) {
-        return INVALID_HANDLE_VALUE;
+static inline wchar_t* _SM_get_file_path_by_file_handle(HANDLE hFile)
+{
+    DWORD symbols_needed, symbols_buf = 2048;
+    wchar_t *filePath;
+
+    while (1) {
+        filePath = (wchar_t *)shared_malloc(symbols_buf * sizeof(wchar_t), SM_BUFFER_COMMON, SM_DATA_DISCARD);
+        symbols_needed = GetFinalPathNameByHandleW(hFile, filePath, symbols_buf, VOLUME_NAME_GUID);
+        if (symbols_needed == 0) return NULL;
+        if (symbols_needed < symbols_buf) break;
+        symbols_buf = symbols_needed;
     }
-    if (wcsncmp(filePath, L"\\\\?\\Volume{", 11) != 0) {
-        return INVALID_HANDLE_VALUE;
-    }
-    filePath[48] = 0; // обрезка пути к файлу
+    if (wcsncmp(filePath, L"\\\\?\\Volume{", 11) != 0) return NULL;
+
+    return filePath;
+}
+
+static inline HANDLE _SM_get_volume_handle_by_file_handle(HANDLE hFile)
+{
+    wchar_t *filePath = _SM_get_file_path_by_file_handle(hFile);
+    if (filePath == NULL) return INVALID_HANDLE_VALUE;
+
+    filePath[48] = 0; // обрезка до GUID последний слеш *не нужен*
     
     return CreateFileW(
         filePath,
@@ -41,24 +58,15 @@ static inline HANDLE AAF_get_volume_handle_by_file_handle(HANDLE hFile)
     );
 }
 
-// Пока не знаю хочу ли оптимизировать с функцией выше
-static inline DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
+static inline DWORD _SM_get_cluster_size_by_file_handle(HANDLE hFile)
 {
-    wchar_t filePath[MAX_PATH];
+    wchar_t *filePath = _SM_get_file_path_by_file_handle(hFile);
+    if (filePath == NULL) return 0;
 
-    DWORD res = GetFinalPathNameByHandleW(hFile, filePath, MAX_PATH, VOLUME_NAME_GUID);
-    if (res == 0) {
-        return 0;
-    }
-    if (wcsncmp(filePath, L"\\\\?\\Volume{", 11) != 0) {
-        return 0;
-    }
-    filePath[49] = 0; // обрезка пути к файлу
+    filePath[49] = 0; // обрезка до GUID последний слеш *нужен*
 
-    DWORD lpSectorsPerCluster;
-    DWORD lpBytesPerSector;
-    DWORD lpNumberOfFreeClusters;
-    DWORD lpTotalNumberOfClusters;
+    DWORD lpSectorsPerCluster, lpBytesPerSector,
+          lpNumberOfFreeClusters, lpTotalNumberOfClusters;
 
     if (!GetDiskFreeSpaceW(
         filePath,
@@ -70,7 +78,7 @@ static inline DWORD AAF_get_cluster_size_by_file_handle(HANDLE hFile)
     return lpSectorsPerCluster * lpBytesPerSector;
 }
 
-static inline int AAF_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, LONGLONG *pCheckedStartingLcn_c8, LONGLONG *pCheckedBlockLength_c8, LONGLONG *pBitmapSize_c8, int *pIsFreeBlock)
+static inline int _SM_check_free_block_in_bitmap(HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, LONGLONG *pCheckedStartingLcn_c8, LONGLONG *pCheckedBlockLength_c8, LONGLONG *pBitmapSize_c8, int *pIsFreeBlock)
 {
     int ret = 0;
     
@@ -110,7 +118,7 @@ err_aaf_check_free_block_in_bitmap:
     return ret;
 }
 
-static inline int AAF_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
+static inline int _SM_get_file_extents(HANDLE hFile, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
 {
     int ret = 0;
 
@@ -155,7 +163,7 @@ err_aaf_get_file_extents:
     return ret;
 }
 
-static inline int AAF_move_extent(HANDLE hVolume, MOVE_FILE_DATA *pMoveFileData)
+static inline int move_extent(HANDLE hVolume, MOVE_FILE_DATA *pMoveFileData)
 {
     int ret = 0;
 
@@ -182,7 +190,7 @@ err_aaf_move_file_clusters:
     return ret;
 }
 
-static inline LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents_num)
+static inline LONGLONG calc_extents_size_in_clusters(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD extents_num)
 {
     LARGE_INTEGER currentVcn = pRPB->StartingVcn;
     LONGLONG ret = 0;
@@ -196,18 +204,18 @@ static inline LONGLONG calc_extents_size(RETRIEVAL_POINTERS_BUFFER *pRPB, DWORD 
     return ret;
 }
 
-static inline LARGE_INTEGER get_file_last_extent_vcn(RETRIEVAL_POINTERS_BUFFER *pRPB)
+static inline LARGE_INTEGER get_file_extent_vcn(RETRIEVAL_POINTERS_BUFFER *pRPB, size_t extent_num)
 {
-    if (pRPB->ExtentCount < 2) {
+    if (extent_num < 2) {
         return pRPB->StartingVcn;
     }
-    return pRPB->Extents[pRPB->ExtentCount - 2].NextVcn;
+    return pRPB->Extents[extent_num - 2].NextVcn;
 }
 
-static int get_file_size_and_extents(HANDLE hFile, LARGE_INTEGER *file_size, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
+static int _SM_get_file_size_and_extents(HANDLE hFile, LARGE_INTEGER *file_size, RETRIEVAL_POINTERS_BUFFER **ppBuffer)
 {
     if (!GetFileSizeEx(hFile, file_size)) return 0;
-    if (AAF_get_file_extents(hFile, ppBuffer) != 0) return 0;
+    if (_SM_get_file_extents(hFile, ppBuffer) != 0) return 0;
     return 1;
 }
 
@@ -233,7 +241,7 @@ static int is_non_cache_operation(size_t threshold_x_times)
     return is_non_cache;
 }
 
-static int find_free_block(
+static int _SM_find_free_block(
         HANDLE hVolume, LONGLONG StartingLcn_c8, LONGLONG BlockLength_c8, size_t BlocksToFind,
         LONGLONG *CheckedStartingLcn_c8, LONGLONG *searchSkip, LONGLONG *searchTotal,
         size_t *FreeBlocksFound, int *IsLastReadNonCached, int *IsEndOfVolume
@@ -249,7 +257,7 @@ static int find_free_block(
 
         // суть в том чтобы не читать весь битмап при прыжках по заполненному диску
         // Больще оптимизация для самого алллокатора
-        if (AAF_check_free_block_in_bitmap(
+        if (_SM_check_free_block_in_bitmap(
                 hVolume, StartingLcn_c8, FAST_CHECK_BITMAP_BYTES,
                 CheckedStartingLcn_c8, &CheckedBlockLength_c8,
                 &BitmapSize_c8, &IsFreeBlock
@@ -266,7 +274,7 @@ static int find_free_block(
             continue;
         }
 
-        if (AAF_check_free_block_in_bitmap(
+        if (_SM_check_free_block_in_bitmap(
                 hVolume, StartingLcn_c8, BlockLength_c8,
                 CheckedStartingLcn_c8, &CheckedBlockLength_c8,
                 &BitmapSize_c8, &IsFreeBlock
@@ -312,31 +320,32 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     LARGE_INTEGER new_file_size; // текущий размер файла + 1 блок
     LARGE_INTEGER frg_file_size; // размер [без врагментов] + 1 кластер
 
-    DWORD old_extent_count, new_extent_count;
+    DWORD old_extent_count, new_extent_count, old_file_size_in_clusters;
 
     // текущий размер и фрагменты
-    if (!get_file_size_and_extents(hFile, &old_file_size, &pRPB_shared)) {
+    if (!_SM_get_file_size_and_extents(hFile, &old_file_size, &pRPB_shared)) {
         status_code = -1;
         goto err_aaf_alloc_block;
     }
     old_extent_count = pRPB_shared->ExtentCount;
+    old_file_size_in_clusters = calc_extents_size_in_clusters(pRPB_shared, old_extent_count);
 
     // Попытка просто аллоцировать новый блок
     new_file_size.QuadPart = old_file_size.QuadPart + blockSize;
-    if (!AAF_set_file_size(hFile, new_file_size)){
+    if (!AAF_set_file_size(hFile, new_file_size)) {
         status_code = -2;
         goto err_aaf_alloc_block;
     }
 
     // новый размер и блоки
-    if (!get_file_size_and_extents(hFile, &new_file_size, &pRPB_shared)) {
+    if (!_SM_get_file_size_and_extents(hFile, &new_file_size, &pRPB_shared)) {
         status_code = -3;
         goto err_aaf_alloc_block;
     }
     new_extent_count = pRPB_shared->ExtentCount;
 
     // нет дополнительной фрагментации
-    if (old_extent_count == new_extent_count) {
+    if (old_extent_count >= new_extent_count) {
         goto err_aaf_alloc_block;
     }
 
@@ -347,27 +356,30 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
 
+    // это vcn нового фрагмента, указывает +1 от старого потому что новых внезапно может быть больше 1
+    LARGE_INTEGER new_fragment_vcn = get_file_extent_vcn(pRPB_shared, old_extent_count + 1);
+
     // для кластерного перемещения нужен хендл диска
-    hVolume = AAF_get_volume_handle_by_file_handle(hFile);
+    hVolume = _SM_get_volume_handle_by_file_handle(hFile);
     if (hVolume == INVALID_HANDLE_VALUE) {
         status_code = -4;
         goto err_aaf_alloc_block;
     }
 
     // размер кластера необходим так как все вычисления в экстентах и битмапе идут в кластерах
-    LONGLONG cluster_size = AAF_get_cluster_size_by_file_handle(hFile);
+    LONGLONG cluster_size = _SM_get_cluster_size_by_file_handle(hFile);
     if (cluster_size == 0) {
         status_code = -5;
         goto err_aaf_alloc_block;
     }
 
-    // подсчет длины файла без последнего фрагмента в кластерах
-    LONGLONG frag_size = calc_extents_size(pRPB_shared, old_extent_count);
-    // а это размер в байтах + 1 кластер
-    frg_file_size.QuadPart = (frag_size + 1) * cluster_size;
+    // нам нужно оставить 1 кластер во фрагменте который будем перемещать
+    // поэтому берем старый размер в кластерах и прибавляем 1
+    // размер нужен в байтах поэтому * cluster_size
+    frg_file_size.QuadPart = (old_file_size_in_clusters + 1) * cluster_size;
 
     // уменьшаем файл чтобы образовался 1 кластер от последнего фрагмента
-    if (!AAF_set_file_size(hFile, frg_file_size)){
+    if (!AAF_set_file_size(hFile, frg_file_size)) {
         status_code = -6;
         goto err_aaf_alloc_block;
     }
@@ -381,7 +393,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     // Структура заполняется таким образом чтобы переместился 1 последний экстент из одного кластера что готовли выше
     MOVE_FILE_DATA pMoveFileData;
     pMoveFileData.FileHandle   = hFile;
-    pMoveFileData.StartingVcn  = get_file_last_extent_vcn(pRPB_shared);
+    pMoveFileData.StartingVcn  = new_fragment_vcn;
     pMoveFileData.ClusterCount = 1;
 
     size_t FreeBlocksFound = 0;
@@ -390,12 +402,12 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     while (1)
     {
         // Ищем первый свободный блок
-        if (find_free_block(
+        if (_SM_find_free_block(
                 hVolume, StartingLcn_c8, BlockLength_c8, 1,
                 &CheckedStartingLcn_c8, &pStats->searchSkip, &pStats->searchTotal,
                 &FreeBlocksFound, &IsLastReadNonCached, &IsEndOfVolume
         )) {
-            status_code = -7;
+            status_code = -8;
             goto err_aaf_alloc_block;
         }
         if (FreeBlocksFound == 0) break;
@@ -407,7 +419,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         pStats->moveAttempts++;
         pMoveFileData.StartingLcn.QuadPart = CheckedStartingLcn_c8 * 8LL;
         qp_timer_move_start = qp_time_get();
-        res = AAF_move_extent(hVolume, &pMoveFileData);
+        res = move_extent(hVolume, &pMoveFileData);
         qp_timer_move_end = qp_time_get();
         if (res == 0) {
             pStats->allocOffset = pMoveFileData.StartingLcn.QuadPart * cluster_size;
@@ -425,7 +437,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         // То сжимаем вначале файл до оригинального размера
         // Иначе ntfs оставит этот висящий кластер и выделит полный блок
         if (!AAF_set_file_size(hFile, old_file_size)) {
-            status_code = -8;
+            status_code = -9;
             goto err_aaf_alloc_block;
         }
         status_code = 2;
@@ -433,7 +445,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
 
     // Теперь увеличиваем размер до планируемого
     if (!AAF_set_file_size(hFile, new_file_size)) {
-        status_code = -9;
+        status_code = -10;
         goto err_aaf_alloc_block;
     }
 
@@ -449,12 +461,12 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     // ну или сколько найдется, энивей ловим только ошибку
     if (IsLastReadNonCached && !IsEndOfVolume) {
         qp_timer_prefetch_start = qp_time_get();
-        if (find_free_block(
+        if (_SM_find_free_block(
                 hVolume, StartingLcn_c8, BlockLength_c8, BLOCKS_TO_PREFETCH,
                 &CheckedStartingLcn_c8, NULL, NULL,
                 &FreeBlocksFound, &IsLastReadNonCached, &IsEndOfVolume
         )) {
-            status_code = -7;
+            status_code = -11;
             goto err_aaf_alloc_block;
         }
         qp_timer_prefetch_end = qp_time_get();
@@ -463,11 +475,11 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
 err_aaf_alloc_block:
 
     // Актуальные числа размера и екстентов для статистики
-    if (get_file_size_and_extents(hFile, &new_file_size, &pRPB_shared)) {
+    if (_SM_get_file_size_and_extents(hFile, &new_file_size, &pRPB_shared)) {
         pStats->fileLength = new_file_size.QuadPart;
         pStats->fileFragments = pRPB_shared->ExtentCount;
     } else {
-        status_code = -10;
+        status_code = -12;
     }
 
     if (hVolume != INVALID_HANDLE_VALUE) CloseHandle(hVolume);
