@@ -320,7 +320,7 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     LARGE_INTEGER new_file_size; // текущий размер файла + 1 блок
     LARGE_INTEGER frg_file_size; // размер [без врагментов] + 1 кластер
 
-    DWORD old_extent_count, new_extent_count, old_file_size_in_clusters;
+    DWORD old_extent_count, new_extent_count;
 
     // текущий размер и фрагменты
     if (!_SM_get_file_size_and_extents(hFile, &old_file_size, &pRPB_shared)) {
@@ -328,7 +328,6 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
     old_extent_count = pRPB_shared->ExtentCount;
-    old_file_size_in_clusters = calc_extents_size_in_clusters(pRPB_shared, old_extent_count);
 
     // Попытка просто аллоцировать новый блок
     new_file_size.QuadPart = old_file_size.QuadPart + blockSize;
@@ -356,6 +355,20 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
         goto err_aaf_alloc_block;
     }
 
+    // NTFS может дописать текущий файл до другого файла и выделить остаток в другом месте
+    // Допустим выравнивание по 7, a xx это какой то другой файл
+    //    1234567123456712345
+    // 1) 11111    xx          - Исходное состояние, (1) это последний фрагмент
+    // 2) 111111111xx22222     - Обычная NTFS аллокация, фрагменты (1) и (2)
+    // 3) 111111111xx2         - Уменьшаем файл до полного экстента и оставляем 1 кластер от следующего (не всегда последний!)
+    // 5) 111111111xx   2      - Перемещаем этот кластер в новый выровненный блок
+    // 6) 111111111xx   22222  - Увеличиваем файл до планированного
+    //    1234567123456712345
+    // То есть последний экстент (1) в шаге 2 может быть больше
+    // Нам нужен размер файла с полным экстентом (1) после ресайза
+    // Да, я знаю, название переменной 10 из 10
+    DWORD file_csize_no_frag = calc_extents_size_in_clusters(pRPB_shared, old_extent_count);
+
     // это vcn нового фрагмента, указывает +1 от старого потому что новых внезапно может быть больше 1
     LARGE_INTEGER new_fragment_vcn = get_file_extent_vcn(pRPB_shared, old_extent_count + 1);
 
@@ -374,9 +387,9 @@ int AAF_alloc_block(HANDLE hFile, LONGLONG blockSize, LONGLONG alignSize, LONGLO
     }
 
     // нам нужно оставить 1 кластер во фрагменте который будем перемещать
-    // поэтому берем старый размер в кластерах и прибавляем 1
+    // поэтому берем все старые экстенты файла (после ресайза) в кластерах и прибавляем 1
     // размер нужен в байтах поэтому * cluster_size
-    frg_file_size.QuadPart = (old_file_size_in_clusters + 1) * cluster_size;
+    frg_file_size.QuadPart = (file_csize_no_frag + 1) * cluster_size;
 
     // уменьшаем файл чтобы образовался 1 кластер от последнего фрагмента
     if (!AAF_set_file_size(hFile, frg_file_size)) {
